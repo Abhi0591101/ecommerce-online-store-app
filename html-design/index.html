@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>HyperLocal | Multi-Store Price Comparison & Instant Delivery</title>
+  
+  <!-- Tailwind CSS CDN (v3.4) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5f3ff',
+              100: '#ede9fe',
+              200: '#ddd6fe',
+              500: '#8b5cf6',
+              600: '#6366f1',
+              700: '#4f46e5',
+              800: '#4338ca',
+              900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Leaflet Map CSS & JS for Live Driver Tracking -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Custom Design CSS -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-[#f9f9fb] text-[#333333] min-h-screen pb-20 md:pb-8 selection:bg-indigo-600 selection:text-white">
+
+  <!-- ================= TOP DEMO ROLE SWITCHER BAR ================= -->
+  <div class="bg-slate-950 text-white text-xs py-1.5 px-4 sticky top-0 z-50 flex items-center justify-between border-b border-slate-800">
+    <div class="flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+      <span class="font-bold tracking-wide text-[11px] sm:text-xs">HYPERLOCAL MULTI-STORE PLATFORM (LIVE)</span>
+    </div>
+
+    <!-- Quick Role Switcher -->
+    <div class="flex items-center gap-1.5 overflow-x-auto py-0.5">
+      <span class="text-slate-400 text-[11px] hidden sm:inline">Role:</span>
+      <button onclick="window.app.switchRole('customer')" class="px-2.5 py-0.5 rounded-full bg-indigo-600 text-white font-bold text-[11px]">👤 Customer</button>
+      <a href="admin.html" class="px-2.5 py-0.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px]">🏪 Store Portal</a>
+      <a href="admin.html" class="px-2.5 py-0.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px]">👑 Super Admin</a>
+    </div>
+  </div>
+
+  <!-- ================= MAIN HEADER ================= -->
+  <header class="bg-white border-b border-slate-200 sticky top-[29px] z-40 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16 gap-3 md:gap-6">
+        
+        <!-- Brand Logo & Delivery Pill -->
+        <div class="flex items-center gap-3 md:gap-6">
+          <a href="index.html" class="flex items-center gap-2 text-slate-900 font-black text-xl md:text-2xl tracking-tight">
+            <div class="w-9 h-9 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-base shadow-md shadow-indigo-600/30">
+              ⚡
+            </div>
+            <span>Hyper<span class="text-indigo-600">Local</span></span>
+          </a>
+
+          <!-- Location Selector Pill -->
+          <button onclick="document.getElementById('locationModal').classList.remove('hidden')" 
+            class="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-full text-xs font-semibold text-slate-700 transition max-w-[180px] sm:max-w-[240px] truncate">
+            <span class="text-indigo-600">📍</span>
+            <span id="currentLocationText" class="truncate font-medium">Deliver to 201301</span>
+            <svg class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+        </div>
+
+        <!-- Search Bar (Centered) -->
+        <div class="flex-grow max-w-xl relative hidden md:block">
+          <input type="text" 
+            id="searchInputDesktop"
+            oninput="window.app.setSearchQuery(this.value)"
+            placeholder="Search Maggi, Amul Milk, Stationery, Veggies, Services..." 
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition shadow-inner">
+          <svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+
+        <!-- Right Buttons (My Orders, Rider Hub, Admin & Cart) -->
+        <div class="flex items-center gap-2 md:gap-2.5">
+          <!-- My Orders Button -->
+          <button onclick="window.app.openMyOrdersModal()" class="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200/80 px-3 py-2 rounded-xl text-xs font-bold transition">
+            <span>📦</span>
+            <span class="hidden sm:inline">My Orders</span>
+          </button>
+
+          <!-- Rider Hub Link -->
+          <a href="driver.html" class="hidden md:flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-500/30 px-3 py-2 rounded-xl text-xs font-bold transition">
+            <span>🛵 Rider Hub</span>
+          </a>
+
+          <!-- Merchant Admin Link -->
+          <a href="admin.html" class="hidden lg:flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold transition">
+            <span>⚙️ Admin</span>
+          </a>
+
+          <!-- Cart Button -->
+          <button onclick="window.app.openCart()" 
+            class="relative flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 sm:px-4 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-indigo-600/20 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+            <span class="hidden sm:inline">Cart</span>
+            <span id="cartBadgeCount" class="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] items-center justify-center hidden">0</span>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Mobile Search Bar -->
+      <div class="pb-3 md:hidden">
+        <div class="relative">
+          <input type="text" 
+            id="searchInputMobile"
+            oninput="window.app.setSearchQuery(this.value)"
+            placeholder="Search Maggi, Amul Milk, Stationery, Veggies..." 
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white shadow-inner">
+          <svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN CONTAINER ================= -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+
+    <!-- Segmented Main Navigation Bar (Products vs Services vs Stores) -->
+    <div class="flex items-center justify-center gap-2 mb-4 bg-slate-200/80 p-1.5 rounded-2xl max-w-xl mx-auto shadow-inner">
+      <button onclick="window.app.setMainTab('products')" id="tabBtn_products" class="flex-1 py-2 px-3 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 bg-white text-indigo-600 shadow-sm">
+        <span>📦 Products</span>
+        <span id="tabCountProds" class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded-full font-extrabold">15</span>
+      </button>
+      <button onclick="window.app.setMainTab('services')" id="tabBtn_services" class="flex-1 py-2 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 text-slate-600 hover:text-indigo-600">
+        <span>🛠️ Services</span>
+        <span id="tabCountServices" class="bg-slate-300 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-extrabold">5</span>
+      </button>
+      <button onclick="window.app.setMainTab('shops')" id="tabBtn_shops" class="flex-1 py-2 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 text-slate-600 hover:text-indigo-600">
+        <span>🏬 Nearby Stores</span>
+        <span id="tabCountStores" class="bg-slate-300 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-extrabold">7</span>
+      </button>
+    </div>
+
+    <!-- Story-Style Circular Categories Bar with Slider Controls -->
+    <div class="relative group bg-white rounded-2xl p-2.5 md:p-3.5 border border-slate-200/80 shadow-sm mb-4">
+      <!-- Left Slide Arrow Button -->
+      <button onclick="window.app.slideCategories(-1)" id="btnSlideCatLeft" 
+        class="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-white/95 backdrop-blur shadow-lg border border-slate-200 text-slate-700 hover:text-indigo-600 hover:scale-110 active:scale-95 flex items-center justify-center transition-all cursor-pointer hidden" title="Slide Left">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+
+      <!-- Category Story Bubbles Container (Smooth Sliding & No Scrollbar) -->
+      <div class="flex items-center gap-4 md:gap-7 overflow-x-auto scroll-smooth no-scrollbar select-none px-2" id="categoryPills" onscroll="window.app.checkCategorySliderArrows()">
+        <!-- Injected via app.js with circular avatars -->
+      </div>
+
+      <!-- Right Slide Arrow Button -->
+      <button onclick="window.app.slideCategories(1)" id="btnSlideCatRight" 
+        class="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-white/95 backdrop-blur shadow-lg border border-slate-200 text-slate-700 hover:text-indigo-600 hover:scale-110 active:scale-95 flex items-center justify-center transition-all cursor-pointer flex" title="Slide Right">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+
+    <!-- Promotional Hero Banner -->
+    <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-5 md:p-6 text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4 mb-6 border border-slate-800">
+      <div>
+        <span class="bg-indigo-600/80 backdrop-blur text-white text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full tracking-wider">
+          🛍️ Lowest Prices Across Nearby Stores & Instant Home Services
+        </span>
+        <h2 class="text-xl md:text-2xl font-black mt-2">Compare Nearby Stores • 15-Min Delivery • 45-Min Home Services</h2>
+        <p id="heroLocationSubtitle" class="text-xs md:text-sm text-slate-300 mt-1">Comparing real-time prices & 15-min delivery across verified merchant stores in your neighborhood.</p>
+      </div>
+
+      <div class="flex items-center gap-2.5 flex-shrink-0">
+        <div class="bg-white/10 backdrop-blur px-4 py-2.5 rounded-2xl border border-white/20 text-center">
+          <span class="text-xs font-bold text-amber-300 block">⚡ Express Slot</span>
+          <span class="text-sm font-black">15-25 Mins</span>
+        </div>
+        <div class="bg-white/10 backdrop-blur px-4 py-2.5 rounded-2xl border border-white/20 text-center">
+          <span class="text-xs font-bold text-emerald-300 block">🛠️ Verified Pros</span>
+          <span class="text-sm font-black">Doorstep 45m</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Area (Grid / Shops / Services) -->
+    <section>
+      <div class="flex items-center justify-between mb-3" id="viewHeaderArea">
+        <h2 class="text-base md:text-lg font-black text-slate-800 flex items-center gap-2" id="viewHeaderTitle">
+          <span>Products In Your Area</span>
+          <span class="text-xs font-bold text-[#038d63] bg-[#f2f9f6] px-2 py-0.5 rounded">Lowest Price Guaranteed</span>
+        </h2>
+      </div>
+
+      <div id="mainContentArea">
+        <!-- Injected via app.js -->
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= SLIDE-OVER CART & ZOMATO CHECKOUT DRAWER ================= -->
+  <div id="cartDrawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col justify-between">
+    
+    <!-- Drawer Header -->
+    <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+          🛒
+        </div>
+        <h3 class="font-extrabold text-slate-900 text-base">Shopping Cart</h3>
+      </div>
+      <button onclick="window.app.closeCart()" class="w-8 h-8 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-bold">
+        ✕
+      </button>
+    </div>
+
+    <!-- Items & Slots Container -->
+    <div class="p-4 overflow-y-auto flex-grow" id="cartItemsContainer">
+      <!-- Injected via app.js -->
+    </div>
+
+    <!-- Cart Footer & Checkout Button -->
+    <div class="p-4 border-t border-slate-100 bg-white" id="cartTotalsContainer">
+      <!-- Injected via app.js -->
+    </div>
+  </div>
+
+  <!-- ================= GUEST CHECKOUT MODAL ================= -->
+  <div id="checkoutModal" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center p-3 md:p-4">
+    <div class="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+      
+      <div class="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+        <div>
+          <span id="checkoutFulfillmentTag" class="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
+            ⚡ Express Doorstep Delivery
+          </span>
+          <h3 id="checkoutModalTitle" class="font-black text-slate-900 text-lg mt-1">Delivery Address & Payment</h3>
+        </div>
+        <button onclick="window.app.closeCheckoutModal()" class="w-8 h-8 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Your Full Name *</label>
+          <input type="text" id="checkoutName" value="Abhishek Sharma" class="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-600 focus:outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Mobile Number (For OTP/Call) *</label>
+            <input type="tel" id="checkoutPhone" value="9876543210" class="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-600 focus:outline-none">
+          </div>
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">PIN Code *</label>
+            <input type="text" id="checkoutPincode" value="201301" class="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-600 focus:outline-none">
+          </div>
+        </div>
+
+        <!-- Dynamic Address or Store Pickup Box -->
+        <div id="checkoutAddressSection">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Delivery Address / Flat / Tower *</label>
+            <textarea id="checkoutAddress" rows="2" class="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-600 focus:outline-none">Flat 402, Tower B, Green Valley Heights, Sector 62, Noida</textarea>
+          </div>
+        </div>
+
+        <!-- Payment Mode -->
+        <div>
+          <label class="font-bold text-slate-900 block mb-2">Select Payment Method:</label>
+          <div class="space-y-2">
+            <label class="flex items-center justify-between p-3 rounded-2xl border border-indigo-600 bg-indigo-50/40 cursor-pointer">
+              <div class="flex items-center gap-2.5">
+                <input type="radio" name="paymentMode" value="COD" checked class="text-indigo-600 focus:ring-indigo-500">
+                <div>
+                  <span class="font-bold text-slate-900 block">💵 Pay on Delivery / Pickup</span>
+                  <span class="text-slate-500 text-[11px]">Pay cash or UPI at delivery or store counter</span>
+                </div>
+              </div>
+              <span class="text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-full">POPULAR</span>
+            </label>
+
+            <label class="flex items-center justify-between p-3 rounded-2xl border border-slate-200 hover:border-slate-300 cursor-pointer">
+              <div class="flex items-center gap-2.5">
+                <input type="radio" name="paymentMode" value="UPI" class="text-indigo-600 focus:ring-indigo-500">
+                <div>
+                  <span class="font-bold text-slate-900 block">📱 Instant UPI QR</span>
+                  <span class="text-slate-500 text-[11px]">Google Pay, PhonePe, Paytm QR</span>
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <button onclick="window.app.confirmOrder()"
+          class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-sm shadow-xl shadow-indigo-600/30 transition flex items-center justify-center gap-2">
+          <span id="checkoutSubmitBtnText">🎉 Place Order & Start Live Tracking</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= LIVE MOVING MAP TRACKING SCREEN ================= -->
+  <div id="liveTrackingModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-2 sm:p-4">
+    <div class="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col h-[92vh] max-h-[800px]">
+      
+      <!-- Tracker Top Bar -->
+      <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black">
+            🛵
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="font-black text-sm md:text-base">Live Order & Rider GPS Tracking</h3>
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            </div>
+            <p class="text-xs text-slate-400">Order: <span id="trackOrderNumber" class="font-mono font-bold text-white">ORD-123456</span></p>
+          </div>
+        </div>
+
+        <button onclick="window.app.closeLiveTracking()" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Live ETA & Status Banner -->
+      <div class="bg-amber-400 text-slate-950 p-3 px-4 flex items-center justify-between font-bold text-xs md:text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-base">⚡</span>
+          <span id="trackEtaStatus">Rider Rahul Sharma is on the way (3 mins away)</span>
+        </div>
+        <div class="bg-slate-950 text-white text-xs px-2.5 py-1 rounded-xl">
+          OTP: <span id="trackOtpCode" class="font-mono font-black text-amber-400">4821</span>
+        </div>
+      </div>
+
+      <!-- Interactive Leaflet Map Container -->
+      <div id="leafletMapContainer" class="w-full flex-grow relative bg-slate-100">
+        <!-- Leaflet renders here -->
+      </div>
+
+      <!-- Driver Details Card -->
+      <div class="p-4 bg-white border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="flex items-center gap-3 w-full sm:w-auto">
+          <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80" class="w-12 h-12 rounded-2xl object-cover border" alt="Driver">
+          <div>
+            <div class="flex items-center gap-2">
+              <h4 id="trackDriverName" class="font-bold text-slate-900 text-sm">Delivery Partner</h4>
+              <span class="badge-rating">★ 4.9</span>
+            </div>
+            <p id="trackDriverPlate" class="text-xs text-slate-500 font-mono">Nearby Fleet Partner</p>
+            <p class="text-[11px] text-indigo-700 font-medium">Fulfilling Store: <strong id="trackStoreName">Local Store</strong></p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <button onclick="window.app.callAssignedRider()"
+            class="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition">
+            📞 Call Rider
+          </button>
+          <button onclick="window.app.whatsappAssignedRider()"
+            class="flex-1 sm:flex-none px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition">
+            💬 WhatsApp
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= REAL LOCATION, GPS & PINCODE MODAL ================= -->
+  <div id="locationModal" class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4">
+    <div class="bg-white rounded-3xl w-full max-w-lg max-h-[88vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-600/10 text-indigo-600 flex items-center justify-center text-xl font-bold">
+            📍
+          </div>
+          <div>
+            <h3 class="font-black text-slate-900 text-base">Select Delivery Location</h3>
+            <p class="text-xs text-slate-500">Live GPS auto-detect or search any Indian area & pincode</p>
+          </div>
+        </div>
+        <button onclick="window.app.closeLocationModal()" class="w-8 h-8 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-4 sm:p-5 space-y-4 overflow-y-auto flex-grow text-xs">
+        
+        <!-- Live GPS Auto-Detect Button Card -->
+        <button id="btnDetectGps" onclick="window.app.detectLiveGpsLocation()" 
+          class="w-full p-4 rounded-2xl border-2 border-indigo-600 bg-gradient-to-r from-indigo-50 via-white to-indigo-50/50 hover:from-indigo-100 hover:to-indigo-100/50 flex items-center justify-between transition shadow-sm group">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg font-black group-hover:scale-110 transition shadow">
+              🎯
+            </div>
+            <div class="text-left">
+              <span id="gpsDetectTitle" class="font-black text-indigo-900 text-sm block">Detect My Live GPS Location</span>
+              <span id="gpsDetectSubtitle" class="text-slate-500 text-[11px]">Using high-accuracy device GPS & satellite coordinates</span>
+            </div>
+          </div>
+          <span class="text-xs font-black text-indigo-600 bg-white px-2.5 py-1 rounded-lg border border-indigo-200 group-hover:bg-indigo-600 group-hover:text-white transition">
+            Auto-Detect ➔
+          </span>
+        </button>
+
+        <!-- Search Bar with Live Real Autocomplete -->
+        <div class="space-y-1.5">
+          <label class="font-bold text-slate-700 block">Or Search Any Indian City, Area or 6-Digit Pincode:</label>
+          <div class="relative">
+            <input type="text" 
+              id="locationSearchInput"
+              oninput="window.app.handleLocationSearch(this.value)"
+              placeholder="e.g. 201301, Indiranagar, Connaught Place, Bandra, 560038..." 
+              class="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-4 py-3 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition shadow-inner">
+            <svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          </div>
+        </div>
+
+        <!-- Dynamic Search Results Box -->
+        <div id="locationSearchResults" class="space-y-2 hidden">
+          <!-- Injected dynamically on search -->
+        </div>
+
+        <!-- Popular Delivery Hubs List -->
+        <div class="space-y-2.5 pt-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-black text-slate-400 uppercase tracking-wider">Popular HyperLocal Hubs</span>
+            <span class="text-[10px] text-indigo-600 font-bold">100% Verified Stores Active</span>
+          </div>
+
+          <!-- City Filter Pills -->
+          <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <button onclick="window.app.filterPopularLocations('all')" class="city-tab-btn active px-3 py-1 rounded-full font-bold bg-slate-900 text-white transition" data-city="all">All Hubs</button>
+            <button onclick="window.app.filterPopularLocations('Bengaluru')" class="city-tab-btn px-3 py-1 rounded-full font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition" data-city="Bengaluru">Bengaluru</button>
+            <button onclick="window.app.filterPopularLocations('Noida')" class="city-tab-btn px-3 py-1 rounded-full font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition" data-city="Noida">Noida / NCR</button>
+            <button onclick="window.app.filterPopularLocations('New Delhi')" class="city-tab-btn px-3 py-1 rounded-full font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition" data-city="New Delhi">Delhi</button>
+            <button onclick="window.app.filterPopularLocations('Mumbai')" class="city-tab-btn px-3 py-1 rounded-full font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition" data-city="Mumbai">Mumbai</button>
+            <button onclick="window.app.filterPopularLocations('Hyderabad')" class="city-tab-btn px-3 py-1 rounded-full font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition" data-city="Hyderabad">Hyderabad</button>
+          </div>
+
+          <div id="popularLocationsList" class="space-y-2">
+            <!-- Dynamically populated from window.APP_DATA.POPULAR_LOCATIONS -->
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= CUSTOMER MY ORDERS & HISTORY MODAL ================= -->
+  <div id="myOrdersModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
+    <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[88vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-600/10 text-indigo-600 flex items-center justify-center text-xl font-bold">
+            📦
+          </div>
+          <div>
+            <h3 class="font-black text-slate-900 text-base sm:text-lg">My Orders & Order History</h3>
+            <p class="text-xs text-slate-500">Track current dispatches, 1-Click Reorder & download Tax Invoices</p>
+          </div>
+        </div>
+        <button onclick="window.app.closeMyOrdersModal()" class="w-8 h-8 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-700 flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Orders List Container -->
+      <div id="myOrdersContainer" class="p-4 sm:p-5 space-y-4 overflow-y-auto flex-grow text-xs">
+        <!-- Injected dynamically via js/app.js -->
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= DOWNLOADABLE / PRINTABLE TAX INVOICE MODAL ================= -->
+  <div id="invoiceModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4">
+    <div class="bg-white rounded-3xl w-full max-w-xl max-h-[92vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Invoice Top Bar -->
+      <div class="p-4 bg-slate-900 text-white flex items-center justify-between no-print">
+        <div class="flex items-center gap-2">
+          <span class="text-lg">🧾</span>
+          <span class="font-black text-sm">Official Tax Invoice & Receipt</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="window.app.printInvoice()" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition shadow">
+            <span>🖨️ Print / PDF</span>
+          </button>
+          <button onclick="window.app.closeInvoiceModal()" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Invoice Printable Content Container -->
+      <div id="invoicePrintableContainer" class="p-6 sm:p-8 space-y-6 overflow-y-auto flex-grow bg-white text-slate-900 font-sans">
+        <!-- Injected dynamically via js/app.js -->
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= MOBILE FIXED BOTTOM NAVIGATION BAR ================= -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-lg border-t border-slate-200 z-40 px-3 py-2 flex items-center justify-around text-[10px] font-bold text-slate-500">
+    <button onclick="window.app.setCategory('all')" class="flex flex-col items-center gap-0.5 text-indigo-600">
+      <span class="text-lg">🏠</span>
+      <span>Home</span>
+    </button>
+    <button onclick="window.app.setCategory('grocery')" class="flex flex-col items-center gap-0.5 hover:text-indigo-600">
+      <span class="text-lg">🛒</span>
+      <span>Grocery</span>
+    </button>
+    <button onclick="window.app.openMyOrdersModal()" class="flex flex-col items-center gap-0.5 hover:text-indigo-600">
+      <span class="text-lg">📦</span>
+      <span>Orders</span>
+    </button>
+    <button onclick="window.app.setCategory('services')" class="flex flex-col items-center gap-0.5 hover:text-indigo-600">
+      <span class="text-lg">🛠️</span>
+      <span>Services</span>
+    </button>
+    <button onclick="window.app.openCart()" class="flex flex-col items-center gap-0.5 text-slate-900 relative">
+      <span class="text-lg">🛍️</span>
+      <span>Cart</span>
+    </button>
+  </nav>
+
+  <!-- Load Scripts -->
+  <script src="js/data.js"></script>
+  <script src="js/notification.js"></script>
+  <script src="js/api-service.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/map-tracker.js"></script>
+  <script src="js/compare.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

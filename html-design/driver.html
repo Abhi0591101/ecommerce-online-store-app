@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rider Delivery Partner Hub | HyperLocal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet Map CSS & JS for Live Radar -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Radar wave animations */
+    @keyframes radar-pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .radar-pulse { animation: radar-pulse 2s infinite ease-in-out; }
+    
+    /* OTP Input Styling */
+    .otp-digit-input:focus {
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen selection:bg-indigo-600 selection:text-white flex flex-col justify-between">
+
+  <!-- ================= TOP RIDER HEADER ================= -->
+  <header class="bg-slate-950 border-b border-slate-800 sticky top-0 z-40 shadow-md">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      
+      <!-- Brand & Driver Profile -->
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <div class="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black text-lg shadow-md shadow-amber-500/20">
+            🛵
+          </div>
+          <span id="dutyIndicatorDot" class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-950 animate-pulse"></span>
+        </div>
+
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 id="driverHeaderName" class="text-sm md:text-base font-black text-white">Select Rider</h1>
+            <span id="driverHeaderRating" class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold px-1.5 py-0.2 rounded">★ 5.0</span>
+          </div>
+          <div class="flex items-center gap-2 mt-0.5">
+            <p id="driverHeaderPlate" class="text-[11px] text-slate-400 font-mono">Fleet Rider</p>
+            <select id="riderSelectDropdown" onchange="window.driverPortal.handleRiderSwitch(this.value)" class="bg-slate-900 border border-slate-700 text-amber-400 text-[10px] font-bold rounded-lg px-2 py-0.5 focus:outline-none cursor-pointer">
+              <!-- Dynamically populated -->
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duty Status Toggle & Cross Links -->
+      <div class="flex items-center gap-2">
+        <!-- Join As New Rider Button -->
+        <button onclick="window.driverPortal.openRegistrationModal()"
+          class="px-3 py-1.5 rounded-xl font-bold text-xs bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 flex items-center gap-1.5 transition">
+          <span>📝 Join Fleet</span>
+        </button>
+
+        <!-- Duty Toggle Button -->
+        <button id="dutyStatusBtn" onclick="window.driverPortal.toggleDutyStatus()"
+          class="px-3.5 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-2 transition shadow-md bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer">
+          <span class="w-2 h-2 rounded-full bg-white animate-ping"></span>
+          <span id="dutyStatusText">ON DUTY</span>
+        </button>
+
+        <!-- Quick Switcher Dropdown / Links -->
+        <div class="hidden sm:flex items-center gap-1.5 text-xs">
+          <a href="index.html" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition">
+            🏠 Customer App
+          </a>
+          <a href="admin.html" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition">
+            ⚙️ Admin
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ================= STATS & EARNINGS BANNER ================= -->
+  <section class="max-w-5xl mx-auto w-full px-4 pt-4">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      
+      <!-- Today's Earnings -->
+      <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 backdrop-blur shadow-sm">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Today's Earnings</span>
+        <div class="flex items-baseline gap-1 mt-0.5">
+          <span class="text-xl font-black text-emerald-400" id="statTodayEarnings">₹340</span>
+          <span class="text-[10px] text-emerald-500 font-bold">+₹45/avg</span>
+        </div>
+      </div>
+
+      <!-- Completed Trips -->
+      <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 backdrop-blur shadow-sm">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Completed Deliveries</span>
+        <div class="flex items-baseline gap-1 mt-0.5">
+          <span class="text-xl font-black text-white" id="statCompletedTrips">4</span>
+          <span class="text-[10px] text-slate-400">Trips</span>
+        </div>
+      </div>
+
+      <!-- Active Run -->
+      <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 backdrop-blur shadow-sm">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Current Assignment</span>
+        <div class="flex items-baseline gap-1 mt-0.5">
+          <span class="text-xs font-black text-amber-400 truncate max-w-[120px]" id="statCurrentRun">Idle • Ready</span>
+        </div>
+      </div>
+
+      <!-- Demo Trigger Tool -->
+      <div class="bg-gradient-to-r from-indigo-900/60 to-purple-900/60 border border-indigo-500/40 rounded-2xl p-2.5 flex flex-col justify-between">
+        <span class="text-[10px] font-bold text-indigo-300 block">⚡ Demo Testing Tool</span>
+        <button onclick="window.driverPortal.triggerDemoOrder()" class="mt-1 w-full py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-[11px] transition shadow">
+          + Create Test Order
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= MAIN SEGMENTED NAVIGATION ================= -->
+  <main class="max-w-5xl mx-auto w-full px-4 py-4 flex-grow space-y-4">
+    
+    <!-- Tab Controls -->
+    <div class="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto no-scrollbar">
+      <button onclick="window.driverPortal.setTab('dispatches')" id="tabBtn_dispatches"
+        class="flex items-center gap-2 px-4 py-2 rounded-2xl font-black text-xs transition bg-indigo-600 text-white shadow-lg shadow-indigo-600/30">
+        <span>⚡ Available Dispatches</span>
+        <span id="badgeDispatchCount" class="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-mono">0</span>
+      </button>
+
+      <button onclick="window.driverPortal.setTab('active_run')" id="tabBtn_active_run"
+        class="flex items-center gap-2 px-4 py-2 rounded-2xl font-black text-xs transition bg-slate-800 hover:bg-slate-700 text-slate-300">
+        <span>🛵 Active Delivery Run</span>
+        <span id="badgeActiveRunStatus" class="w-2 h-2 rounded-full bg-slate-500"></span>
+      </button>
+
+      <button onclick="window.driverPortal.setTab('history')" id="tabBtn_history"
+        class="flex items-center gap-2 px-4 py-2 rounded-2xl font-black text-xs transition bg-slate-800 hover:bg-slate-700 text-slate-300">
+        <span>📋 Completed Runs</span>
+      </button>
+
+      <button onclick="window.driverPortal.setTab('radar')" id="tabBtn_radar"
+        class="flex items-center gap-2 px-4 py-2 rounded-2xl font-black text-xs transition bg-slate-800 hover:bg-slate-700 text-slate-300">
+        <span>🗺️ Live GPS Radar</span>
+      </button>
+    </div>
+
+    <!-- Dynamic Container for Active Tab Content -->
+    <div id="driverTabContent" class="space-y-4">
+      <!-- Injected dynamically via js/driver.js -->
+    </div>
+
+  </main>
+
+  <!-- ================= SECURE DELIVERY OTP VERIFICATION MODAL ================= -->
+  <div id="otpVerificationModal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+      
+      <div class="text-center space-y-1">
+        <div class="w-14 h-14 bg-indigo-600/20 border border-indigo-500/40 text-indigo-400 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-inner">
+          🔒
+        </div>
+        <h3 class="text-lg font-black text-white">Enter Customer Delivery OTP</h3>
+        <p class="text-xs text-slate-400">Ask the customer for the 4-digit code shown on their tracking screen to confirm handover.</p>
+      </div>
+
+      <!-- Secure Handover Notice -->
+      <div class="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-3 text-center flex items-center justify-center gap-2 text-slate-300 text-xs">
+        <span>🔐</span>
+        <span>Secret OTP is on the customer's live tracking screen. Ask customer to verify handover.</span>
+      </div>
+
+      <!-- 4-Box PIN Input -->
+      <div class="flex items-center justify-center gap-3">
+        <input type="text" maxlength="1" id="otpDigit_1" class="w-12 h-14 bg-slate-800 border-2 border-slate-700 text-white rounded-2xl text-center text-2xl font-black focus:outline-none otp-digit-input" autofocus>
+        <input type="text" maxlength="1" id="otpDigit_2" class="w-12 h-14 bg-slate-800 border-2 border-slate-700 text-white rounded-2xl text-center text-2xl font-black focus:outline-none otp-digit-input">
+        <input type="text" maxlength="1" id="otpDigit_3" class="w-12 h-14 bg-slate-800 border-2 border-slate-700 text-white rounded-2xl text-center text-2xl font-black focus:outline-none otp-digit-input">
+        <input type="text" maxlength="1" id="otpDigit_4" class="w-12 h-14 bg-slate-800 border-2 border-slate-700 text-white rounded-2xl text-center text-2xl font-black focus:outline-none otp-digit-input">
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="space-y-2 pt-2">
+        <button onclick="window.driverPortal.submitOtpVerification()" 
+          class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-sm shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2">
+          <span>✓ Verify OTP & Complete Handover</span>
+        </button>
+
+        <button onclick="window.driverPortal.closeOtpModal()" 
+          class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl font-bold text-xs transition">
+          Cancel
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= RIDER ONBOARDING & KYC REGISTRATION MODAL ================= -->
+  <div id="driverRegistrationModal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 hidden items-center justify-center p-3 sm:p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl font-bold border border-amber-500/30">
+            🛵
+          </div>
+          <div>
+            <h3 class="font-black text-white text-base">Join HyperLocal Delivery Fleet</h3>
+            <p class="text-xs text-slate-400">Earn ₹50 - ₹75 per trip + daily instant payouts</p>
+          </div>
+        </div>
+        <button onclick="window.driverPortal.closeRegistrationModal()" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Registration Form Body -->
+      <form id="riderRegistrationForm" onsubmit="window.driverPortal.handleRegisterSubmit(event)" class="p-5 space-y-4 overflow-y-auto flex-grow text-xs">
+        
+        <div>
+          <label class="font-bold text-slate-300 block mb-1">Full Legal Name (as per Driving License) *</label>
+          <input type="text" id="regRiderName" required placeholder="e.g. Vicky Kashyap" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Mobile Number (WhatsApp/OTP) *</label>
+            <input type="tel" id="regRiderPhone" required placeholder="9811447788" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Preferred City / Sector *</label>
+            <input type="text" id="regRiderCity" value="Sector 62, Noida" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Vehicle Type *</label>
+            <select id="regRiderVehicleType" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="Hero Splendor (Bike)">🏍️ Motorcycle / Bike (Hero Splendor / Pulsar)</option>
+              <option value="Honda Activa (Scooter)">🛵 Scooter (Activa / Jupiter)</option>
+              <option value="Electric Scooter (EV)">⚡ Electric Scooter (Ola / Ather / EV)</option>
+              <option value="Delivery Bicycle">🚲 Delivery Bicycle</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Vehicle Number Plate *</label>
+            <input type="text" id="regRiderPlate" required placeholder="UP 16 DX 9876" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Driving License Number *</label>
+            <input type="text" id="regRiderLicense" required placeholder="DL-UP16-2022001928" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Aadhaar Card Number *</label>
+            <input type="text" id="regRiderAadhaar" required placeholder="5544-3322-1100" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-300 block mb-1">UPI ID for Daily Payouts (Optional)</label>
+          <input type="text" id="regRiderUpi" placeholder="9811447788@paytm" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+        </div>
+
+        <div class="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-3.5 text-slate-300 space-y-1 text-[11px]">
+          <span class="text-amber-400 font-bold block">🛡️ Instant Verification Policy</span>
+          <p>Your application is reviewed by our Fleet Admin within 15-30 minutes. Once approved, you can log in, go ON DUTY, and start delivering.</p>
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" class="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-2xl text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2">
+            <span>🚀 Submit Onboarding Application ➔</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- ================= BOTTOM STATUS FOOTER ================= -->
+  <footer class="bg-slate-950 border-t border-slate-800 py-3 text-center text-xs text-slate-500">
+    <div class="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <span class="flex items-center gap-1.5 font-bold">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        HyperLocal Fast Logistics Engine • Sector 62 Fleet
+      </span>
+      <span class="font-mono text-[11px] text-slate-400">Rider App v2.4 • Live GPS Synced</span>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="js/data.js"></script>
+  <script src="js/notification.js"></script>
+  <script src="js/map-tracker.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/driver.js"></script>
+</body>
+</html>

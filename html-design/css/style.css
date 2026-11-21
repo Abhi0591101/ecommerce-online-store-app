@@ -1,0 +1,151 @@
+/* Hyperlocal Multi-Store Design System & Tokens */
+:root {
+  --brand-primary: #4f46e5; /* Indigo */
+  --brand-primary-hover: #4338ca;
+  --brand-primary-light: #eef2ff;
+  --brand-primary-border: #c7d2fe;
+  --color-green: #038d63; /* Rating & Free Delivery Green */
+  --color-dark: #1e293b;
+  --color-grey: #64748b;
+  --color-border: #e2e8f0;
+  --color-bg: #f8fafc;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-dark);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* No Scrollbar Utility - 100% Cross Browser */
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar,
+.scrollbar-none {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+/* Category Circular Story Bubbles */
+.category-story-bubble {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.category-story-bubble:hover {
+  transform: translateY(-2px);
+}
+.category-story-bubble.active .bubble-avatar {
+  border-color: var(--brand-primary);
+  background-color: var(--brand-primary-light);
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+.category-story-bubble.active .bubble-text {
+  color: var(--brand-primary);
+  font-weight: 700;
+}
+
+/* Product Card */
+.product-card {
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.product-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+  border-color: var(--brand-primary-border);
+}
+
+/* Star Rating Badge */
+.badge-rating {
+  background-color: var(--color-green);
+  color: #ffffff;
+  font-weight: 700;
+  border-radius: 9999px;
+  padding: 1px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+}
+
+/* Price & Discount formatting */
+.price-onwards {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+.price-mrp {
+  color: #94a3b8;
+  font-size: 12px;
+  text-decoration: line-through;
+  font-weight: 500;
+}
+.discount-text {
+  color: var(--color-green);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Free Delivery Badge */
+.badge-free-delivery {
+  background-color: #f0fdf4;
+  color: var(--color-green);
+  font-weight: 700;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  display: inline-block;
+}
+
+/* Moving Bike Marker on Leaflet Map */
+.bike-marker-icon {
+  transition: all 0.8s linear;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
+}
+
+/* Print Stylesheet for Tax Invoice */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #invoiceModal, #invoiceModal * {
+    visibility: visible;
+  }
+  #invoiceModal {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    background: white;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
