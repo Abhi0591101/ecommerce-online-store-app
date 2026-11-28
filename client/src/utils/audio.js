@@ -97,7 +97,24 @@ export function playError() {
 
 export function playAlert(freq = 720) {
   unlockAudio();
-  tone(freq, 0.35, 'sine', 0.09);
+  tone(freq, 0.35, 'sine', 0.12);
+}
+
+/** Louder two-tone chime for inbox / bell notifications (audible after first click). */
+export function playNotificationChime() {
+  unlockAudio();
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const run = () => {
+    tone(880, 0.16, 'triangle', 0.22, 0);
+    tone(1175, 0.22, 'triangle', 0.2, 0.14);
+    tone(1480, 0.28, 'sine', 0.16, 0.3);
+  };
+  if (ctx.state === 'suspended') {
+    ctx.resume().then(run).catch(() => {});
+  } else {
+    run();
+  }
 }
 
 export default {
@@ -107,5 +124,6 @@ export default {
   playCashRegister,
   playSuccess,
   playError,
-  playAlert
+  playAlert,
+  playNotificationChime
 };

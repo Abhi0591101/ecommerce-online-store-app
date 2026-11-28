@@ -1,28 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import CustomerHome from './pages/CustomerHome.jsx'
-import StoreAdmin from './pages/StoreAdmin.jsx'
 import AdminPanel from './pages/AdminPanel.jsx'
 import SellerPanel from './pages/SellerPanel.jsx'
 import SellerRegisterPage from './pages/SellerRegisterPage.jsx'
 import RiderHub from './pages/RiderHub.jsx'
+import FranchisePanel from './pages/FranchisePanel.jsx'
+import FranchisePage from './pages/FranchisePage.jsx'
 import LoginPage, { viewForRole } from './pages/LoginPage.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 import { usePlatform } from './context/PlatformContext.jsx'
 
 const LAST_PANEL_KEY = 'japto_last_panel_view'
-const STAFF_VIEWS = ['seller', 'superadmin', 'platform_ops', 'rider']
+/** Staff panels: Admin / Seller shop / Rider / Franchise (+ customer storefront separately) */
+const STAFF_VIEWS = ['seller', 'superadmin', 'rider', 'franchise']
 
 function normalizeView(view) {
-  if (view === 'admin') return 'seller'
+  // Old StoreAdmin / Category Ops → single Admin Panel
+  if (view === 'platform_ops' || view === 'admin' || view === 'store_admin') return 'superadmin'
   return view
 }
 
 function canAccessView(user, view) {
   if (!user) return false
   const v = normalizeView(view)
-  if (v === 'superadmin' || v === 'platform_ops') return user.role === 'superadmin'
+  if (v === 'superadmin') return user.role === 'superadmin'
   if (v === 'seller') return user.role === 'store_owner'
   if (v === 'rider') return user.role === 'driver' || user.role === 'superadmin'
+  if (v === 'franchise') return user.role === 'franchise' || user.role === 'superadmin'
   return true
 }
 
@@ -31,9 +35,8 @@ function allowedPanelForRole(role, panelView) {
   const v = normalizeView(panelView)
   if (role === 'store_owner') return v === 'seller' ? v : null
   if (role === 'driver') return v === 'rider' ? v : null
-  if (role === 'superadmin') {
-    return v === 'superadmin' || v === 'platform_ops' ? v : null
-  }
+  if (role === 'franchise') return v === 'franchise' ? v : null
+  if (role === 'superadmin') return v === 'superadmin' ? v : null
   return null
 }
 
@@ -42,7 +45,7 @@ function panelLabelFor(view, role) {
   if (role === 'customer') return '👤 My Account'
   if (v === 'seller' || role === 'store_owner') return '🏪 Seller Panel'
   if (v === 'rider' || role === 'driver') return '🛵 Rider Hub'
-  if (v === 'platform_ops') return '🗂️ Category Ops'
+  if (v === 'franchise' || role === 'franchise') return '🗺️ Franchise Panel'
   if (v === 'superadmin' || role === 'superadmin') return '👑 Admin Panel'
   return null
 }
@@ -132,7 +135,9 @@ function App() {
       }
 
       try {
-        await refreshAdminQueues()
+        if (loggedInUser?.role === 'superadmin') {
+          await refreshAdminQueues()
+        }
         await refreshCatalog?.()
       } catch {
         /* ignore */
@@ -154,9 +159,13 @@ function App() {
     }
   }, [view, rememberPanel])
 
+  // Migrate saved Category Ops / old admin view → Admin Panel
   useEffect(() => {
-    if (rawView === 'admin') setView('seller')
-  }, [rawView, setView])
+    if (rawView === 'platform_ops' || rawView === 'store_admin') {
+      rememberPanel('superadmin')
+      setView('superadmin')
+    }
+  }, [rawView, setView, rememberPanel])
 
   // If a customer is somehow on a staff view, send them home — never Admin login
   useEffect(() => {
@@ -176,7 +185,13 @@ function App() {
 
     if (!isAuthenticated || !user) {
       const intent =
-        view === 'rider' ? 'driver' : view === 'superadmin' || view === 'platform_ops' ? 'superadmin' : 'store_owner'
+        view === 'rider'
+          ? 'driver'
+          : view === 'franchise'
+            ? 'franchise'
+            : view === 'superadmin'
+              ? 'superadmin'
+              : 'store_owner'
       setLoginIntent(intent)
       setView('login')
       return
@@ -222,6 +237,15 @@ function App() {
     )
   }
 
+  if (view === 'franchise_page') {
+    return (
+      <FranchisePage
+        onBack={goStorefront}
+        onOpenLogin={() => openLogin('franchise')}
+      />
+    )
+  }
+
   if (view === 'login') {
     return (
       <LoginPage
@@ -246,36 +270,37 @@ function App() {
         key="superadmin"
         onNavigateCustomer={goStorefront}
         onLogout={handleLogout}
-        onOpenLegacyOps={() => {
-          rememberPanel('platform_ops')
-          setView('platform_ops')
-        }}
       />
     )
   }
 
-  if (view === 'platform_ops' && isAuthenticated && user?.role === 'superadmin') {
-    return (
-      <StoreAdmin
-        key="platform_ops"
-        mode="superadmin"
-        onNavigateCustomer={goStorefront}
-        onNavigateRider={() => openLogin('driver')}
-        onLogout={handleLogout}
-        onBackToAdminPanel={() => {
-          rememberPanel('superadmin')
-          setView('superadmin')
-        }}
-      />
-    )
-  }
-
-  if (view === 'rider' && isAuthenticated && canAccessView(user, view)) {
+  // Rider hub: logged-in partners see panel; guests see apply/signup gate (Japto Delivery Partner)
+  if (view === 'rider') {
+    if (isAuthenticated && canAccessView(user, view)) {
+      return (
+        <RiderHub
+          key="rider"
+          onNavigateCustomer={goStorefront}
+          onNavigateAdmin={() => openLogin('store_owner')}
+          onLogout={handleLogout}
+        />
+      )
+    }
     return (
       <RiderHub
-        key="rider"
+        key="rider-guest"
         onNavigateCustomer={goStorefront}
-        onNavigateAdmin={() => openLogin('store_owner')}
+        onNavigateAdmin={() => openLogin('driver')}
+        onLogout={handleLogout}
+      />
+    )
+  }
+
+  if (view === 'franchise' && isAuthenticated && canAccessView(user, view)) {
+    return (
+      <FranchisePanel
+        key="franchise"
+        onNavigateCustomer={goStorefront}
         onLogout={handleLogout}
       />
     )
@@ -287,6 +312,7 @@ function App() {
       onLogout={handleLogout}
       onGoDashboard={goDashboard}
       dashboardLabel={dashboardLabel}
+      onOpenFranchise={() => setView('franchise_page')}
     />
   )
 }

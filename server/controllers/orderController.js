@@ -5,6 +5,10 @@ const Delivery = require('../models/Delivery');
 const Store = require('../models/Store');
 const StoreProductPricing = require('../models/StoreProductPricing');
 const { notifyNewOrder, notifyOrderCancel } = require('../utils/sellerNotifications');
+const {
+  attachFranchiseCommissionToOrder,
+  postFranchiseCommissionOnComplete
+} = require('../utils/franchiseCommission');
 
 const generateOrderNumber = () => {
   const hex = crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -35,7 +39,9 @@ const placeOrder = async (req, res, next) => {
       couponCode = '',
       discountAmount = 0,
       walletUsed = 0,
-      paymentTxnId = ''
+      paymentTxnId = '',
+      razorpayOrderId = '',
+      razorpayPaymentId = ''
     } = req.body;
 
     if (!storeId || !Array.isArray(items) || items.length === 0) {
@@ -141,6 +147,31 @@ const placeOrder = async (req, res, next) => {
     const sellerEarning = Math.round((itemsTotal - platformFee) * 100) / 100;
     const gstAmount = Math.round(itemsTotal * (gstPct / 100) * 100) / 100;
 
+    // Online payments: only mark paid if Razorpay signature was verified server-side
+    let resolvedPaymentStatus = 'pending';
+    let resolvedPaymentMode = paymentMode || 'COD';
+    const txnId = String(razorpayPaymentId || paymentTxnId || '').trim();
+    if (resolvedPaymentMode !== 'COD' && txnId) {
+      const { consumeVerified } = require('../utils/verifiedPayments');
+      // Amount check soft: Razorpay amount may differ slightly from server recalculation
+      const verified = consumeVerified(txnId, null);
+      if (verified) {
+        resolvedPaymentStatus = 'paid';
+        if (verified.method) resolvedPaymentMode = verified.method;
+        if (
+          verified.amountPaise != null &&
+          Math.abs(verified.amountPaise - Math.round(grandTotal * 100)) > 500
+        ) {
+          console.warn(
+            `[payments] Amount mismatch payment=${txnId} rzp=${verified.amountPaise} order=${Math.round(grandTotal * 100)}`
+          );
+        }
+      } else {
+        // Do not trust client "PAID" — keep pending until webhook/verify
+        resolvedPaymentStatus = 'pending';
+      }
+    }
+
     if (couponCode) {
       const Coupon = require('../models/Coupon');
       await Coupon.updateOne(
@@ -153,7 +184,7 @@ const placeOrder = async (req, res, next) => {
     const otpCode = generateOtp();
     const orderNumber = generateOrderNumber();
 
-    const [order] = await Order.create([{
+    const orderDraft = {
       orderNumber,
       customerId: customerId || undefined,
       storeId,
@@ -173,15 +204,29 @@ const placeOrder = async (req, res, next) => {
       sellerEarning,
       gstAmount,
       gstPct,
-      paymentMode,
-      paymentStatus: paymentMode === 'COD' ? 'pending' : 'pending',
-      paymentTxnId: paymentTxnId || '',
+      paymentMode: resolvedPaymentMode,
+      paymentStatus: resolvedPaymentStatus,
+      paymentTxnId: txnId,
+      razorpayOrderId: razorpayOrderId || '',
+      razorpayPaymentId: razorpayPaymentId || paymentTxnId || '',
       couponCode: couponCode ? String(couponCode).toUpperCase() : '',
       discountAmount: discount,
       walletUsed: wallet,
       status: orderType === 'pickup' ? 'accepted' : 'placed',
-      otpCode
-    }], { session });
+      otpCode,
+      franchiseCommission: 0,
+      franchiseCommissionPct: 0,
+      franchiseCommissionPosted: false
+    };
+
+    // Delivery PIN → franchise commission (% of deliveryFee)
+    try {
+      await attachFranchiseCommissionToOrder(orderDraft);
+    } catch {
+      /* non-blocking */
+    }
+
+    const [order] = await Order.create([orderDraft], { session });
 
     if (wallet > 0 && customerId) {
       const User = require('../models/User');
@@ -264,7 +309,10 @@ const placeOrder = async (req, res, next) => {
         storeId: order.storeId,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
-        deliveryAddress: order.deliveryAddress
+        deliveryAddress: order.deliveryAddress,
+        paymentMode: order.paymentMode,
+        paymentStatus: order.paymentStatus,
+        paymentTxnId: order.paymentTxnId
       }
     });
   } catch (error) {
@@ -339,6 +387,14 @@ const updateOrderStatus = async (req, res, next) => {
       order.deliveryMethod = deliveryMethod;
     }
     await order.save();
+
+    if (status === 'completed' && prevStatus !== 'completed') {
+      try {
+        await postFranchiseCommissionOnComplete(order);
+      } catch {
+        /* non-blocking */
+      }
+    }
 
     if (status === 'cancelled' && prevStatus !== 'cancelled') {
       const storeDoc = await Store.findById(order.storeId._id || order.storeId);

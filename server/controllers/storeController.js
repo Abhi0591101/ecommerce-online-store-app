@@ -1,23 +1,7 @@
 const bcrypt = require('bcryptjs');
 const Store = require('../models/Store');
 const User = require('../models/User');
-
-const toRadians = (deg) => (deg * Math.PI) / 180;
-
-const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
-  if ([lat1, lon1, lat2, lon2].some((v) => v === undefined || v === null || Number.isNaN(Number(v)))) {
-    return null;
-  }
-  const R = 6371;
-  const dLat = toRadians(lat2 - lat1);
-  const dLon = toRadians(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return parseFloat((R * c).toFixed(1));
-};
+const { hasLocationQuery, resolveNearbyStores, distanceKm: calculateDistanceKm } = require('../utils/nearbyStores');
 
 const mapStore = (store, userLat = null, userLng = null) => {
   const doc = store.toObject ? store.toObject() : { ...store };
@@ -25,7 +9,8 @@ const mapStore = (store, userLat = null, userLng = null) => {
   let distanceKm = null;
 
   if (userLat !== null && userLng !== null && storeLat !== undefined && storeLng !== undefined) {
-    distanceKm = calculateDistanceKm(userLat, userLng, storeLat, storeLng);
+    const d = calculateDistanceKm(userLat, userLng, storeLat, storeLng);
+    distanceKm = d != null ? Number(d.toFixed(1)) : null;
   }
 
   return {
@@ -54,6 +39,41 @@ const getStores = async (req, res, next) => {
       status = 'approved',
       includeAll
     } = req.query;
+
+    // Customer location browse: radius + ServiceArea pins (not exact-PIN-only AND)
+    const isCustomerBrowse =
+      status === 'approved' &&
+      hasLocationQuery(req.query) &&
+      includeAll !== 'true';
+
+    if (isCustomerBrowse) {
+      const nearby = await resolveNearbyStores({
+        lat,
+        lng,
+        pincode,
+        city,
+        radiusKm,
+        onlineOnly: onlineOnly === 'true' ? true : onlineOnly === 'false' ? false : true
+      });
+      const stores = nearby.stores.map((s) => ({
+        ...s,
+        deliveryFee: s.baseDeliveryFee,
+        ownerName: s.ownerName || '',
+        estDeliveryMins:
+          s.distanceKm != null
+            ? Math.max(15, Math.min(60, Math.round(15 + s.distanceKm * 4)))
+            : s.estDeliveryMins
+      }));
+      return res.json({
+        success: true,
+        data: stores,
+        meta: {
+          scopedToLocation: true,
+          serviceable: nearby.serviceable,
+          servicePins: nearby.servicePins
+        }
+      });
+    }
 
     const filter = {};
     if (includeAll === 'true' && req.user?.role === 'superadmin') {
@@ -142,7 +162,7 @@ const createStore = async (req, res, next) => {
       lng,
       ownerName,
       ownerPhone,
-      ownerPassword = 'password123',
+      ownerPassword,
       gstin,
       fssai,
       category,
@@ -168,9 +188,17 @@ const createStore = async (req, res, next) => {
     const ownerPhoneFinal = ownerPhone || phone;
 
     if (!ownerId) {
-      let owner = await User.findOne({ phone: String(ownerPhoneFinal).trim() });
+      let owner = await User.findOne({
+        phone: String(ownerPhoneFinal).trim(),
+        role: 'store_owner'
+      });
       if (!owner) {
-        const hash = await bcrypt.hash(ownerPassword, 10);
+        const crypto = require('crypto');
+        const rawPass =
+          ownerPassword && String(ownerPassword).length >= 6
+            ? String(ownerPassword)
+            : crypto.randomBytes(24).toString('hex');
+        const hash = await bcrypt.hash(rawPass, 10);
         owner = await User.create({
           name: ownerName || name,
           phone: String(ownerPhoneFinal).trim(),
@@ -226,8 +254,19 @@ const updateStoreKycStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Store not found' });
     }
 
+    const { hasCompleteSellerKyc } = require('../utils/storeVisibility');
     store.status = status;
-    if (status === 'approved') store.isOnline = true;
+    if (status === 'approved') {
+      store.isActive = true;
+      store.isOnline = hasCompleteSellerKyc(store);
+    }
+    if (status === 'rejected') {
+      store.isActive = false;
+      store.isOnline = false;
+    }
+    if (status === 'pending') {
+      store.isOnline = false;
+    }
     await store.save();
 
     if (store.ownerId) {
@@ -247,6 +286,7 @@ const updateStoreKycStatus = async (req, res, next) => {
 };
 
 // PATCH /api/stores/:id/toggle-status
+// Admin: any store. Seller (store_owner): only their own approved store.
 const toggleStoreStatus = async (req, res, next) => {
   try {
     const store = await Store.findById(req.params.id);
@@ -254,7 +294,43 @@ const toggleStoreStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Store not found' });
     }
 
-    store.isOnline = !store.isOnline;
+    const role = req.user?.role;
+    const isAdmin = role === 'superadmin';
+    const isOwner =
+      role === 'store_owner' &&
+      store.ownerId &&
+      String(store.ownerId) === String(req.user._id);
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only change online status for your own store'
+      });
+    }
+
+    const { canSellerGoOnline } = require('../utils/storeVisibility');
+    const goingOnline = !store.isOnline;
+
+    // Going online: seller blocked if rejected / inactive / KYC incomplete
+    if (goingOnline) {
+      if (!isAdmin) {
+        const gate = canSellerGoOnline(store);
+        if (!gate.ok) {
+          return res.status(403).json({ success: false, message: gate.message });
+        }
+      } else {
+        // Admin can force online only when store is approved + active + KYC ok
+        const gate = canSellerGoOnline(store);
+        if (!gate.ok) {
+          return res.status(403).json({
+            success: false,
+            message: gate.message
+          });
+        }
+      }
+    }
+
+    store.isOnline = goingOnline;
     await store.save();
 
     res.json({

@@ -91,7 +91,7 @@ export default function PrintableInvoice({ open, order, onClose }) {
               </span>
               <h4 className="font-black text-slate-900 text-sm">{order.customerName || 'Customer'}</h4>
               <p className="text-slate-600">{order.deliveryAddress}</p>
-              <p className="text-slate-500">PIN: {order.pincode || '201301'}</p>
+              <p className="text-slate-500">PIN: {order.pincode || '—'}</p>
               <p className="text-slate-500">Phone: +91 {order.customerPhone}</p>
               <p className="text-slate-500 font-bold">
                 Mode: {order.orderType === 'pickup' ? '🏬 Store Pickup' : '🛵 Doorstep Express'}

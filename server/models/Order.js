@@ -23,14 +23,25 @@ const OrderSchema = new mongoose.Schema({
   itemsTotal: { type: Number, required: true },
   deliveryFee: { type: Number, default: 0.0 },
   grandTotal: { type: Number, required: true },
-  paymentMode: { type: String, enum: ['COD', 'UPI', 'CARD'], default: 'COD' },
+  paymentMode: {
+    type: String,
+    enum: ['COD', 'UPI', 'CARD', 'ONLINE', 'NETBANKING', 'WALLET'],
+    default: 'COD'
+  },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed', 'refunded'], default: 'pending' },
   paymentTxnId: { type: String, default: '' },
+  razorpayOrderId: { type: String, default: '' },
+  razorpayPaymentId: { type: String, default: '' },
   refundStatus: { type: String, enum: ['none', 'requested', 'approved', 'rejected', 'processed'], default: 'none' },
   refundNote: { type: String, default: '' },
   platformFee: { type: Number, default: 0 },
   sellerEarning: { type: Number, default: 0 },
   commissionPaid: { type: Boolean, default: false },
+  /** Franchise that owns delivery PIN — earns % of deliveryFee */
+  franchiseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Franchise' },
+  franchiseCommissionPct: { type: Number, default: 0 },
+  franchiseCommission: { type: Number, default: 0 },
+  franchiseCommissionPosted: { type: Boolean, default: false },
   gstAmount: { type: Number, default: 0 },
   gstPct: { type: Number, default: 0 },
   status: {

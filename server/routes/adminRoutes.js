@@ -68,9 +68,13 @@ router.post('/banners', c.createBanner);
 router.patch('/banners/:id', c.updateBanner);
 router.delete('/banners/:id', c.deleteBanner);
 
-// 15 Notifications
+// 15 Notifications (outbound broadcast) + inbox alerts (bell)
 router.get('/notifications', c.listAdminNotifications);
 router.post('/notifications', c.sendAdminNotification);
+router.get('/alerts', c.listAdminAlerts);
+router.patch('/alerts/:id/read', c.markAdminAlertRead);
+router.post('/alerts/read-all', c.markAllAdminAlertsRead);
+router.get('/badges', c.getAdminBadges);
 
 // 16 Cities
 router.get('/cities', c.listCities);
@@ -84,5 +88,11 @@ router.put('/delivery-charges', c.saveDeliveryCharges);
 // 18 Tax
 router.get('/tax', c.getTaxConfig);
 router.patch('/tax', c.updateTaxConfig);
+
+// Email SMTP + templates + queue
+router.get('/email-settings', c.getEmailSettings);
+router.patch('/email-settings', c.updateEmailSettings);
+router.get('/email-queue', c.listEmailQueue);
+router.post('/email-queue/process', c.processEmailQueue);
 
 module.exports = router;

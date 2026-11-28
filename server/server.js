@@ -29,15 +29,20 @@ require('./models/SiteSettings');
 require('./models/Complaint');
 require('./models/PlatformConfig');
 require('./models/AdminNotification');
+require('./models/AdminAlert');
 require('./models/WalletLedger');
 require('./models/CustomerNotification');
 require('./models/Wishlist');
 require('./models/RiderRequest');
 require('./models/RiderNotification');
+require('./models/FranchiseNotification');
+require('./models/EmailQueue');
+require('./models/EmailSettings');
 
 const authRoutes = require('./routes/authRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const deliveryBoyRoutes = require('./routes/deliveryBoyRoutes');
+const franchiseRoutes = require('./routes/franchiseRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const storeRoutes = require('./routes/storeRoutes');
 const productRoutes = require('./routes/productRoutes');
@@ -80,6 +85,15 @@ app.use(cors({
   origin: CLIENT_ORIGIN,
   credentials: true
 }));
+
+// Razorpay webhook needs raw body for signature verification (before JSON parser)
+const { razorpayWebhook } = require('./controllers/paymentController');
+app.post(
+  '/api/payments/razorpay/webhook',
+  express.raw({ type: 'application/json' }),
+  razorpayWebhook
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -97,6 +111,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/stores', storeRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/locations', locationRoutes);
@@ -108,6 +123,7 @@ app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/delivery-boy', deliveryBoyRoutes);
+app.use('/api/franchise', franchiseRoutes);
 
 // Public site content (no auth)
 app.get('/api/public/settings', getSettings);

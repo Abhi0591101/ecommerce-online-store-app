@@ -44,18 +44,7 @@ Ensure MongoDB is running locally, or point `MONGODB_URI` at [MongoDB Atlas](htt
 npm run seed
 ```
 
-Seeds **all live catalog data** into MongoDB: categories, stores, products + pricing, home services, service-area hubs, riders, and demo users (plus 1 pending store + 1 pending rider for KYC testing).
-
-Demo logins (password for all: `password123`):
-
-| Role | Phone |
-|------|-------|
-| Super Admin | `9999900000` |
-| Store owner (Gupta) | `9811223344` |
-| Rider | `9811009988` |
-| Customer | `9999900001` |
-
-Role buttons in the app header auto-login these accounts via JWT.
+Seeds catalog data into MongoDB when you run seed. **All portal logins require OTP** (no shared demo passwords on the login screen).
 
 ### 4. Run development
 

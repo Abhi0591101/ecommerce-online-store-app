@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { registerSeller, sendSellerOtp } from '../services/api';
+import { useEffect, useState } from 'react';
+import PasswordStrengthMeter from '../components/PasswordStrengthMeter';
+import RazorpayFeePay from '../components/RazorpayFeePay';
+import { getPublicSettings, registerSeller, sendSellerOtp } from '../services/api';
 
 const fileToDataUrl = (file) =>
   new Promise((resolve, reject) => {
@@ -21,7 +23,8 @@ const Field = ({ label, required, children }) => (
 
 /**
  * Seller registration per Japto Seller Panel requirements:
- * OTP, PAN+doc, GST XOR Enrollment + doc, bank+proof, optional FSSAI, ₹500+GST fee confirmation.
+ * OTP, PAN+doc, GST XOR Enrollment + doc, bank+proof, promoters, optional FSSAI,
+ * registration fee amount from Admin config.
  */
 export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
   const [phone, setPhone] = useState('');
@@ -30,7 +33,9 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
   const [otpHint, setOtpHint] = useState('');
   const [taxMode, setTaxMode] = useState('gst'); // gst | enrollment
   const [dealsInFood, setDealsInFood] = useState(false);
-  const [feePaid, setFeePaid] = useState(false);
+  const [feePayment, setFeePayment] = useState(null);
+  const [registrationFee, setRegistrationFee] = useState(216);
+  const [ownerNameDraft, setOwnerNameDraft] = useState('');
   const [docs, setDocs] = useState({
     panDocUrl: '',
     gstDocUrl: '',
@@ -41,6 +46,21 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicSettings()
+      .then((res) => {
+        const fee = Number(res?.data?.sellerRegistrationFee);
+        if (!cancelled && Number.isFinite(fee) && fee >= 0) setRegistrationFee(fee);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onFile = async (key, file) => {
     if (!file) return;
@@ -57,12 +77,13 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
     try {
       const res = await sendSellerOtp({ phone: phone.trim() });
       setOtpSent(true);
-      const demo = res.demoOtp || res.otp;
-      if (demo) {
-        setOtp(String(demo));
-        setOtpHint(res.message || `Demo OTP: ${demo}`);
+      const code = res.demoOtp || res.otp;
+      if (code) {
+        setOtp(String(code));
+        setOtpHint(res.message || `OTP sent. Use ${code}`);
       } else {
-        setOtpHint(res.message || 'OTP sent to your mobile');
+        setOtp('');
+        setOtpHint(res.message || 'OTP sent to your mobile number');
       }
     } catch (err) {
       setError(err.message || 'OTP failed');
@@ -98,8 +119,8 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
       setError('FSSAI number and document required for food sellers');
       return;
     }
-    if (!feePaid) {
-      setError('Confirm registration fee ₹500 + GST paid to Company bank account');
+    if (registrationFee > 0 && !feePayment?.paymentTxnId) {
+      setError(`Pay registration fee ₹${registrationFee} via Razorpay before submitting`);
       return;
     }
 
@@ -133,7 +154,14 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
         dealsInFood,
         fssai: dealsInFood ? fd.get('fssai') : '',
         fssaiDocUrl: dealsInFood ? docs.fssaiDocUrl : '',
+        promoter1Name: fd.get('promoter1Name') || '',
+        promoter1Phone: fd.get('promoter1Phone') || '',
+        promoter2Name: fd.get('promoter2Name') || '',
+        promoter2Phone: fd.get('promoter2Phone') || '',
         registrationFeePaid: true,
+        registrationFeeTxnId: feePayment?.paymentTxnId || '',
+        registrationFeeRazorpayOrderId: feePayment?.razorpayOrderId || '',
+        razorpayPaymentId: feePayment?.razorpayPaymentId || '',
         category: 'grocery'
       };
       const res = await registerSeller(payload);
@@ -153,7 +181,9 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="font-black text-xl text-slate-900">Seller Registration</h1>
-            <p className="text-xs text-slate-500 mt-0.5">OTP · KYC docs · ₹500+GST fee · Admin approval</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              OTP · KYC docs · ₹{registrationFee} fee · Admin approval
+            </p>
           </div>
           <button type="button" onClick={onBackToLogin} className="text-xs font-bold text-indigo-600">
             Back to login
@@ -197,10 +227,35 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
             <h2 className="font-black text-sm text-slate-800">2. Account & store</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Field label="Owner name" required>
-                <input name="ownerName" required className={inputClass} />
+                <input
+                  name="ownerName"
+                  required
+                  className={inputClass}
+                  value={ownerNameDraft}
+                  onChange={(e) => setOwnerNameDraft(e.target.value)}
+                />
               </Field>
               <Field label="Password" required>
-                <input name="password" type="password" required className={inputClass} />
+                <div className="relative">
+                  <input
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    className={`${inputClass} pr-14`}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-emerald-700 px-2"
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <PasswordStrengthMeter password={password} />
               </Field>
               <Field label="Email">
                 <input name="email" type="email" className={inputClass} />
@@ -226,6 +281,20 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
                   onChange={(e) => onFile('photoUrl', e.target.files?.[0])}
                   className="text-[10px] file:rounded-lg file:border-0 file:bg-indigo-50 file:px-2 file:py-1 file:font-bold file:text-indigo-700"
                 />
+              </Field>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <Field label="Promoter 1 name">
+                <input name="promoter1Name" className={inputClass} />
+              </Field>
+              <Field label="Promoter 1 mobile">
+                <input name="promoter1Phone" className={inputClass} />
+              </Field>
+              <Field label="Promoter 2 name">
+                <input name="promoter2Name" className={inputClass} />
+              </Field>
+              <Field label="Promoter 2 mobile">
+                <input name="promoter2Phone" className={inputClass} />
               </Field>
             </div>
           </section>
@@ -342,19 +411,28 @@ export default function SellerRegisterPage({ onSuccess, onBackToLogin }) {
           </section>
 
           <section className="space-y-2">
-            <h2 className="font-black text-sm text-slate-800">6. Registration fee</h2>
+            <h2 className="font-black text-sm text-slate-800">6. Registration fee (Razorpay)</h2>
             <p className="text-slate-500">
-              INR 500 + applicable GST must be paid to the Company&apos;s designated bank account. Activation proceeds after Admin confirms payment + documents.
+              Pay ₹{registrationFee} online via Razorpay (UPI / Card / Netbanking). Then submit the
+              form for Admin document verification.
             </p>
-            <label className="flex items-center gap-2 font-bold text-slate-800">
-              <input type="checkbox" checked={feePaid} onChange={(e) => setFeePaid(e.target.checked)} />
-              I confirm ₹500 + GST payment has been made
-            </label>
+            <RazorpayFeePay
+              purpose="seller_registration"
+              amount={registrationFee}
+              label={`Pay ₹${registrationFee} registration fee`}
+              customer={{ name: ownerNameDraft, phone }}
+              paidMeta={feePayment}
+              onPaid={(meta) => {
+                setFeePayment(meta);
+                setError('');
+              }}
+              onError={(msg) => setError(msg)}
+            />
           </section>
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (registrationFee > 0 && !feePayment?.paymentTxnId)}
             className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-2xl font-black text-sm"
           >
             {submitting ? 'Submitting…' : 'Submit for Admin verification'}

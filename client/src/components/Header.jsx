@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import LocationModal from './LocationModal';
@@ -6,6 +6,9 @@ import LocationModal from './LocationModal';
 export default function Header({
   location,
   onLocationChange,
+  locationDetecting = false,
+  needLocationPicker = false,
+  onLocationPickerHandled,
   searchQuery,
   onSearchChange,
   onOpenOrders,
@@ -13,11 +16,19 @@ export default function Header({
   onOpenLogin,
   onLogout,
   onGoDashboard,
+  onOpenFranchise,
   dashboardLabel: dashboardLabelProp
 }) {
   const { totals } = useCart();
   const { user, isAuthenticated } = useAuth();
   const [showLocationModal, setShowLocationModal] = useState(false);
+
+  useEffect(() => {
+    if (needLocationPicker && !locationDetecting) {
+      setShowLocationModal(true);
+      onLocationPickerHandled?.();
+    }
+  }, [needLocationPicker, locationDetecting, onLocationPickerHandled]);
 
   // Prefer label from App (remembers which panel you left), else fall back by role
   const dashboardLabel =
@@ -26,11 +37,13 @@ export default function Header({
       ? '🏪 Seller Panel'
       : user?.role === 'driver'
         ? '🛵 Rider Hub'
-        : user?.role === 'superadmin'
-          ? '👑 Admin Panel'
-          : user?.role === 'customer'
-            ? '👤 My Account'
-            : null);
+        : user?.role === 'franchise'
+          ? '🗺️ Franchise Panel'
+          : user?.role === 'superadmin'
+            ? '👑 Admin Panel'
+            : user?.role === 'customer'
+              ? '👤 My Account'
+              : null);
 
   return (
     <>
@@ -42,6 +55,15 @@ export default function Header({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {onOpenFranchise ? (
+            <button
+              type="button"
+              onClick={onOpenFranchise}
+              className="px-2.5 py-0.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold text-[11px]"
+            >
+              Franchise
+            </button>
+          ) : null}
           {isAuthenticated ? (
             <>
               <span className="text-slate-300 text-[11px] font-semibold hidden sm:inline truncate max-w-[140px]">
@@ -95,7 +117,13 @@ export default function Header({
                 className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-full text-xs font-semibold text-slate-700 transition max-w-[180px] sm:max-w-[240px] truncate"
               >
                 <span className="text-indigo-600">📍</span>
-                <span className="truncate font-medium">Deliver to {location?.pincode || '201301'}</span>
+                <span className="truncate font-medium">
+                  {locationDetecting || location?.detecting
+                    ? 'Detecting PIN…'
+                    : location?.pincode
+                      ? `Deliver to ${location.pincode}`
+                      : 'Set delivery PIN'}
+                </span>
                 <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
                 </svg>
@@ -173,6 +201,7 @@ export default function Header({
       <LocationModal
         open={showLocationModal}
         location={location}
+        autoDetect={needLocationPicker || !location?.pincode}
         onSelect={onLocationChange}
         onClose={() => setShowLocationModal(false)}
       />

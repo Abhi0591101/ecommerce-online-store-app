@@ -13,7 +13,12 @@ const SiteSettingsSchema = new mongoose.Schema(
     contactAddress: { type: String, default: '' },
     termsHtml: { type: String, default: '' },
     privacyHtml: { type: String, default: '' },
-    shippingReturnHtml: { type: String, default: '' }
+    shippingReturnHtml: { type: String, default: '' },
+    /** Razorpay — managed from Admin → Settings (not .env) */
+    razorpayKeyId: { type: String, default: '' },
+    razorpayKeySecret: { type: String, default: '' },
+    razorpayWebhookSecret: { type: String, default: '' },
+    razorpayCompanyName: { type: String, default: 'Japto.in' }
   },
   { timestamps: true }
 );

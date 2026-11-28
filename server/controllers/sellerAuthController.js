@@ -1,9 +1,16 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Store = require('../models/Store');
-const { issueOtp, verifyOtp, DEMO_OTP, OTP_MODE, normalizePhone } = require('../utils/otpStore');
+const PlatformConfig = require('../models/PlatformConfig');
+const { issueOtp, verifyOtp, OTP_MODE, normalizePhone } = require('../utils/otpStore');
 
-const REGISTRATION_FEE = 500;
+const DEFAULT_REGISTRATION_FEE = 216;
+
+const resolveRegistrationFee = async () => {
+  const cfg = await PlatformConfig.findOne({ key: 'default' }).lean();
+  const fee = Number(cfg?.sellerRegistrationFee);
+  return Number.isFinite(fee) && fee >= 0 ? fee : DEFAULT_REGISTRATION_FEE;
+};
 
 // POST /api/auth/seller/send-otp
 const sendSellerOtp = async (req, res, next) => {
@@ -16,9 +23,8 @@ const sendSellerOtp = async (req, res, next) => {
     res.json({
       success: true,
       mode: result.mode || OTP_MODE,
-      // Expose demo OTP in API so UI can show it until SMS gateway is live
-      ...(result.otp ? { demoOtp: result.otp, otp: result.otp } : {}),
-      message: result.message || `Use OTP ${DEMO_OTP}`
+      ...(result.otp ? { otp: result.otp, demoOtp: result.demoOtp || result.otp } : {}),
+      message: result.message || 'OTP sent to your mobile number'
     });
   } catch (error) {
     next(error);
@@ -58,11 +64,19 @@ const registerSeller = async (req, res, next) => {
       fssai,
       fssaiDocUrl,
       registrationFeePaid,
+      registrationFeeTxnId,
+      registrationFeeRazorpayOrderId,
+      razorpayPaymentId,
+      paymentTxnId,
       category,
       baseDeliveryFee,
       freeDeliveryAbove,
       estDeliveryMins,
-      openingTime
+      openingTime,
+      promoter1Name,
+      promoter1Phone,
+      promoter2Name,
+      promoter2Phone
     } = req.body;
 
     if (!name || !phone || !password || !otp) {
@@ -74,7 +88,17 @@ const registerSeller = async (req, res, next) => {
     if (!verifyOtp(phone, otp)) {
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
-    if (!registrationFeePaid) {
+    const feeAmount = await resolveRegistrationFee();
+    const txnId = String(
+      registrationFeeTxnId || razorpayPaymentId || paymentTxnId || ''
+    ).trim();
+    if (feeAmount > 0) {
+      const { requireFeePayment } = require('../utils/verifiedPayments');
+      const paid = requireFeePayment(txnId, feeAmount);
+      if (!paid.ok) {
+        return res.status(400).json({ success: false, message: paid.message });
+      }
+    } else if (!registrationFeePaid) {
       return res.status(400).json({
         success: false,
         message: 'registrationFeePaid must be true'
@@ -117,16 +141,29 @@ const registerSeller = async (req, res, next) => {
     }
 
     const phoneNorm = normalizePhone(phone);
-    const exists = await User.findOne({ phone: phoneNorm });
+    const exists = await User.findOne({ phone: phoneNorm, role: 'store_owner' });
     if (exists) {
-      return res.status(409).json({ success: false, message: 'Phone already registered' });
+      return res.status(409).json({
+        success: false,
+        message: 'This mobile is already registered as a seller'
+      });
+    }
+    const emailNorm = email ? String(email).trim().toLowerCase() : '';
+    if (emailNorm) {
+      const emailTaken = await User.findOne({ email: emailNorm, role: 'store_owner' });
+      if (emailTaken) {
+        return res.status(409).json({
+          success: false,
+          message: 'This email is already registered as a seller'
+        });
+      }
     }
 
     const hash = await bcrypt.hash(password, 10);
     const user = await User.create({
       name,
       phone: phoneNorm,
-      email: email || undefined,
+      email: emailNorm || undefined,
       password: hash,
       role: 'store_owner',
       status: 'pending'
@@ -157,15 +194,48 @@ const registerSeller = async (req, res, next) => {
       fssaiDocUrl: dealsInFood ? fssaiDocUrl || '' : '',
       phoneVerified: true,
       registrationFeePaid: true,
-      registrationFeeAmount: REGISTRATION_FEE,
+      registrationFeeAmount: feeAmount,
+      registrationFeeTxnId: txnId,
+      registrationFeeRazorpayOrderId: String(registrationFeeRazorpayOrderId || '').trim(),
+      registrationFeePaidAt: feeAmount > 0 ? new Date() : undefined,
       category: category || 'grocery',
       baseDeliveryFee: baseDeliveryFee != null ? Number(baseDeliveryFee) : 20,
       freeDeliveryAbove: freeDeliveryAbove != null ? Number(freeDeliveryAbove) : 300,
       estDeliveryMins: estDeliveryMins != null ? Number(estDeliveryMins) : 20,
       openingTime: openingTime || '08:00 AM - 10:30 PM',
       status: 'pending',
-      isOnline: false
+      isOnline: false,
+      promoters: [
+        {
+          name: String(promoter1Name || '').trim(),
+          phone: promoter1Phone ? normalizePhone(promoter1Phone) : ''
+        },
+        {
+          name: String(promoter2Name || '').trim(),
+          phone: promoter2Phone ? normalizePhone(promoter2Phone) : ''
+        }
+      ].filter((p) => p.name || p.phone)
     });
+
+    if (txnId) {
+      const { consumeVerified } = require('../utils/verifiedPayments');
+      consumeVerified(txnId, null);
+    }
+
+    try {
+      const { pushAdminAlert } = require('../utils/adminAlerts');
+      await pushAdminAlert({
+        type: 'seller_application',
+        title: 'Seller application pending',
+        body: `${store.name} (${phoneNorm})`,
+        entityType: 'store',
+        entityId: store._id,
+        linkTab: 'sellers',
+        dedupeKey: `seller_application:${store._id}`
+      });
+    } catch {
+      /* non-blocking */
+    }
 
     res.status(201).json({
       success: true,

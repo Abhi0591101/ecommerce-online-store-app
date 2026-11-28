@@ -26,6 +26,7 @@ router.post('/deliveries/:id/verify-otp', c.verifyOtpComplete);
 
 router.get('/stats', c.getHistoryStats);
 router.get('/notifications', c.listNotifications);
+router.patch('/notifications/read-all', c.markAllNotificationsRead);
 router.patch('/notifications/:id/read', c.markNotificationRead);
 
 router.get('/requests', c.listRequests);

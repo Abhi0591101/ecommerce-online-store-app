@@ -1,77 +1,150 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  createRazorpayOrder,
+  getRazorpayConfig,
+  verifyRazorpayPayment
+} from '../services/api';
 
-const COUNTDOWN_SECS = 60;
+const loadRazorpayScript = () =>
+  new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
 
+/**
+ * Online payment via Razorpay Checkout (UPI / Card / Netbanking / Wallet).
+ * Requires Razorpay Key Id + Secret in Admin → Settings.
+ */
 export default function PaymentModal({
   open,
   amount = 0,
   orderPreview = null,
+  customer = null,
   onClose,
   onPaid
 }) {
-  const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECS);
-  const [paying, setPaying] = useState(false);
-  const [selectedApp, setSelectedApp] = useState(null);
-
-  const upiString = useMemo(() => {
-    const amt = Number(amount || 0).toFixed(2);
-    const note = encodeURIComponent(orderPreview?.orderNumber || 'HyperLocal Order');
-    return `upi://pay?pa=hyperlocal@okaxis&pn=HyperLocal&am=${amt}&cu=INR&tn=${note}`;
-  }, [amount, orderPreview]);
-
-  const qrUrl = useMemo(() => {
-    // Public QR image generator for demo UPI payload
-    return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiString)}`;
-  }, [upiString]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [config, setConfig] = useState(null);
 
   useEffect(() => {
     if (!open) return undefined;
-    setSecondsLeft(COUNTDOWN_SECS);
-    setPaying(false);
-    setSelectedApp(null);
-    const timer = setInterval(() => {
-      setSecondsLeft((s) => (s <= 1 ? 0 : s - 1));
-    }, 1000);
-    return () => clearInterval(timer);
+    setError('');
+    setBusy(false);
+    let cancelled = false;
+    getRazorpayConfig()
+      .then((r) => {
+        if (!cancelled) setConfig(r?.data || r);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message || 'Could not load payment config');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   if (!open) return null;
 
-  const expired = secondsLeft === 0;
-
-  const simulatePaid = async () => {
-    if (paying) return;
-    setPaying(true);
-    await new Promise((r) => setTimeout(r, 600));
-    onPaid?.({
-      paymentMode: 'UPI',
-      paymentStatus: 'PAID',
-      paidVia: selectedApp || 'UPI_QR',
-      paidAt: new Date().toISOString()
-    });
-    setPaying(false);
-  };
-
-  const openQuickPay = (app) => {
-    setSelectedApp(app);
-    // Deep-link attempt (works on mobile if app installed); desktop falls through to simulate
+  const startRazorpay = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
     try {
-      window.location.href = upiString;
-    } catch {
-      /* ignore */
+      const cfg = config || (await getRazorpayConfig()).data;
+      if (!cfg?.enabled || !cfg.keyId) {
+        throw new Error(
+          'Razorpay not configured. Admin → Settings → add Razorpay Key Id and Key Secret.'
+        );
+      }
+
+      const scriptOk = await loadRazorpayScript();
+      if (!scriptOk || !window.Razorpay) {
+        throw new Error('Could not load Razorpay checkout script');
+      }
+
+      const created = await createRazorpayOrder({
+        purpose: 'checkout',
+        amount: Number(amount),
+        customerName: customer?.name || orderPreview?.customerName || '',
+        customerPhone: customer?.phone || orderPreview?.customerPhone || ''
+      });
+      const orderData = created?.data || created;
+
+      const options = {
+        key: orderData.keyId || cfg.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: cfg.companyName || 'Japto.in',
+        description: orderPreview?.orderNumber
+          ? `Order ${orderPreview.orderNumber}`
+          : 'Japto.in order',
+        order_id: orderData.razorpayOrderId,
+        prefill: {
+          name: customer?.name || orderPreview?.customerName || '',
+          contact: customer?.phone || orderPreview?.customerPhone || '',
+          email: customer?.email || ''
+        },
+        theme: { color: '#4f46e5' },
+        handler: async (response) => {
+          try {
+            const verified = await verifyRazorpayPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              amount: Number(amount)
+            });
+            const v = verified?.data || verified;
+            await onPaid?.({
+              paymentMode: v.paymentMode || 'ONLINE',
+              paymentStatus: 'paid',
+              paymentTxnId: v.paymentTxnId || response.razorpay_payment_id,
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id
+            });
+          } catch (err) {
+            setError(err.message || 'Payment verification failed');
+            setBusy(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setBusy(false);
+            setError('Payment cancelled. You can try again or choose COD.');
+          }
+        }
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', (resp) => {
+        setError(resp?.error?.description || 'Payment failed');
+        setBusy(false);
+      });
+      rzp.open();
+    } catch (err) {
+      setError(err.message || 'Could not start payment');
+      setBusy(false);
     }
   };
 
-  const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
-  const ss = String(secondsLeft % 60).padStart(2, '0');
+  const enabled = config?.enabled;
 
   return (
     <div className="fixed inset-0 z-[60] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4">
       <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Instant UPI / Razorpay</p>
-            <h3 className="font-black text-base">Scan & Pay ₹{amount}</h3>
+            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-300">
+              Razorpay Checkout
+            </p>
+            <h3 className="font-black text-base">Pay ₹{Number(amount || 0).toFixed(0)}</h3>
           </div>
           <button
             type="button"
@@ -83,68 +156,36 @@ export default function PaymentModal({
         </div>
 
         <div className="p-5 space-y-4 text-center">
-          <div
-            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-black ${
-              expired ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${expired ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'}`} />
-            {expired ? 'Payment window expired' : `Complete payment in ${mm}:${ss}`}
-          </div>
-
-          <div className="mx-auto w-[220px] h-[220px] rounded-2xl border-2 border-slate-200 bg-white p-3 shadow-inner relative">
-            <img src={qrUrl} alt="UPI QR Code" className="w-full h-full object-contain" />
-            {expired && (
-              <div className="absolute inset-0 bg-white/80 backdrop-blur-[1px] flex items-center justify-center rounded-2xl">
-                <button
-                  type="button"
-                  onClick={() => setSecondsLeft(COUNTDOWN_SECS)}
-                  className="px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-black"
-                >
-                  Refresh QR
-                </button>
-              </div>
-            )}
-          </div>
-
-          <p className="text-[11px] text-slate-500 font-medium">
-            UPI ID: <span className="font-mono font-bold text-slate-800">hyperlocal@okaxis</span>
+          <p className="text-xs font-semibold text-slate-600">
+            UPI · Cards · Netbanking · Wallets — secured by Razorpay
           </p>
 
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { id: 'gpay', label: 'GPay', emoji: '🟢' },
-              { id: 'phonepe', label: 'PhonePe', emoji: '🟣' },
-              { id: 'paytm', label: 'Paytm', emoji: '🔵' }
-            ].map((app) => (
-              <button
-                key={app.id}
-                type="button"
-                disabled={expired}
-                onClick={() => openQuickPay(app.id)}
-                className={`py-2.5 rounded-2xl border text-xs font-black transition ${
-                  selectedApp === app.id
-                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
-                    : 'border-slate-200 hover:border-indigo-300 text-slate-700'
-                } disabled:opacity-50`}
-              >
-                {app.emoji} {app.label}
-              </button>
-            ))}
-          </div>
+          {config && !enabled ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900 text-left">
+              Razorpay is off. Admin → Settings → save Razorpay Key Id and Key Secret, then retry.
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="text-xs font-bold text-rose-600 text-left">{error}</p>
+          ) : null}
 
           <button
             type="button"
-            disabled={paying || expired}
-            onClick={simulatePaid}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-2xl font-black text-sm shadow-lg shadow-emerald-600/25 transition"
+            disabled={busy || (config && !enabled)}
+            onClick={startRazorpay}
+            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white rounded-2xl font-black text-sm shadow-lg shadow-indigo-600/25 transition"
           >
-            {paying ? 'Confirming Payment…' : '✅ Simulate Successful Payment'}
+            {busy ? 'Opening Razorpay…' : `Pay ₹${Number(amount || 0).toFixed(0)} securely`}
           </button>
 
-          <p className="text-[10px] text-slate-400">
-            Demo sandbox — marks order as <strong>PAID</strong> and opens live tracking.
-          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 text-xs font-bold text-slate-500 hover:text-slate-800"
+          >
+            Cancel / use COD instead
+          </button>
         </div>
       </div>
     </div>

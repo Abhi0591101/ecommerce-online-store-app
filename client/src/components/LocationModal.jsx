@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { reverseGeocode } from '../services/api';
-
+import { checkServiceability } from '../services/api';
+import {
+  detectCurrentDeliveryLocation,
+  isValidIndianPin
+} from '../utils/detectLocation';
 
 const GPS_ERRORS = {
+  0: 'This browser does not support GPS. Enter a pincode instead.',
   1: 'Location permission denied. Allow location access in your browser settings, then try again.',
   2: 'GPS unavailable. Turn on device location / Wi‑Fi, or enter a pincode.',
-  3: 'GPS timed out. Move near a window or outdoors and try again, or enter a pincode.'
+  3: 'GPS timed out. Move near a window or outdoors and try again, or enter a pincode.',
+  insecure: 'GPS needs HTTPS (or localhost). Use pincode instead.',
+  coarse: 'Could not get a precise GPS fix. Enable device location, or enter your pincode.',
+  no_pin: 'Location found but pincode could not be matched. Enter PIN manually.'
 };
-
-const isValidIndianPin = (pin) => /^[1-9]\d{5}$/.test(String(pin || ''));
 
 async function lookupPincode(pin) {
   const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
@@ -27,69 +32,7 @@ async function lookupPincode(pin) {
   };
 }
 
-/**
- * Collect several GPS samples and keep the most accurate one.
- * Desktop browsers often return a coarse IP location first — we wait for a better fix.
- */
-function captureBestPosition({ timeoutMs = 12000, minSamples = 2 } = {}) {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(Object.assign(new Error('unsupported'), { code: 0 }));
-      return;
-    }
-
-    let best = null;
-    let samples = 0;
-    let settled = false;
-    let watchId = null;
-
-    const finish = (err) => {
-      if (settled) return;
-      settled = true;
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
-      clearTimeout(timer);
-      if (best) resolve(best);
-      else reject(err || Object.assign(new Error('timeout'), { code: 3 }));
-    };
-
-    const consider = (pos) => {
-      samples += 1;
-      if (!best || pos.coords.accuracy < best.coords.accuracy) {
-        best = pos;
-      }
-      // Good enough for delivery (~street level)
-      if (pos.coords.accuracy > 0 && pos.coords.accuracy <= 80 && samples >= 1) {
-        finish();
-      } else if (samples >= minSamples && best && best.coords.accuracy <= 150) {
-        finish();
-      }
-    };
-
-    watchId = navigator.geolocation.watchPosition(
-      consider,
-      (err) => {
-        if (best) finish();
-        else finish(err);
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: timeoutMs
-      }
-    );
-
-    // Also kick an immediate reading
-    navigator.geolocation.getCurrentPosition(consider, () => {}, {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: timeoutMs
-    });
-
-    const timer = setTimeout(() => finish(), timeoutMs);
-  });
-}
-
-export default function LocationModal({ open, location, onSelect, onClose }) {
+export default function LocationModal({ open, location, onSelect, onClose, autoDetect = false }) {
   const [gpsStatus, setGpsStatus] = useState('idle');
   const [gpsMessage, setGpsMessage] = useState('');
   const [pincode, setPincode] = useState('');
@@ -97,96 +40,96 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
   const [pinMessage, setPinMessage] = useState('');
   const [preview, setPreview] = useState(null);
   const cancelledRef = useRef(false);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open) {
+      autoStartedRef.current = false;
+      return undefined;
+    }
     cancelledRef.current = false;
     setGpsStatus('idle');
     setGpsMessage('');
     setPinStatus('idle');
     setPinMessage('');
     setPreview(null);
-    setPincode('');
+    setPincode(isValidIndianPin(location?.pincode) ? location.pincode : '');
     return () => {
       cancelledRef.current = true;
     };
-  }, [open]);
+  }, [open, location?.pincode]);
+
+  useEffect(() => {
+    if (!open || !autoDetect || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    detectGps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoDetect]);
 
   if (!open) return null;
 
-  const confirm = (payload) => {
+  const confirm = async (payload) => {
     if (!isValidIndianPin(payload.pincode)) return;
+    let serviceable = null;
+    try {
+      const res = await checkServiceability(payload.pincode);
+      serviceable = res?.data?.serviceable ?? res?.serviceable ?? null;
+    } catch {
+      serviceable = null;
+    }
     onSelect({
       pincode: payload.pincode,
       area: payload.area,
       city: payload.city,
       state: payload.state || '',
-      lat: Number(payload.lat),
-      lng: Number(payload.lng),
+      lat: Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : null,
+      lng: Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
       radiusKm: 5,
-      source: payload.source
+      accuracyM: payload.accuracyM,
+      source: payload.source || 'manual',
+      confirmedAt: Date.now(),
+      detecting: false,
+      serviceable
     });
     onClose();
   };
 
   const detectGps = async () => {
-    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
-      setGpsStatus('error');
-      setGpsMessage('GPS needs HTTPS (or localhost). Use pincode instead.');
-      return;
-    }
-    if (!navigator.geolocation) {
-      setGpsStatus('unsupported');
-      setGpsMessage('This browser does not support GPS. Enter a pincode instead.');
-      return;
-    }
-
     setGpsStatus('loading');
-    setGpsMessage('');
+    setGpsMessage('Getting a precise GPS fix…');
     setPreview(null);
 
     try {
-      const pos = await captureBestPosition({ timeoutMs: 14000, minSamples: 2 });
+      const next = await detectCurrentDeliveryLocation();
       if (cancelledRef.current) return;
-
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      const accuracyM = Math.round(pos.coords.accuracy || 0);
-
-      // Coarse network/IP location — do not trust for delivery pin
-      if (accuracyM > 2500) {
-        setGpsStatus('error');
-        setGpsMessage('Could not get a precise GPS fix. Enable device location, or enter your pincode.');
-        return;
-      }
-
-      const res = await reverseGeocode(lat, lng);
-      if (cancelledRef.current) return;
-      const geo = res.data || {};
-
-      const next = {
-        area: geo.area || geo.displayName?.split(',')[0] || 'Current GPS location',
-        city: geo.city || '',
-        state: geo.state || '',
-        pincode: isValidIndianPin(geo.pincode) ? geo.pincode : '',
-        displayName: geo.displayName || '',
-        lat,
-        lng,
-        accuracyM,
-        pinConfidence: geo.pinConfidence || 'none',
-        source: 'gps'
-      };
 
       setPreview(next);
-      setPincode(next.pincode);
+      setPincode(next.pincode || '');
       setGpsStatus('success');
-      setGpsMessage(
-        !next.pincode ? 'Enter your pincode below to continue.' : ''
-      );
+      if (!next.pincode) {
+        setGpsMessage('Location found, but PIN was unclear. Enter your 6-digit pincode below.');
+      } else if (next.accuracyM > 150) {
+        setGpsMessage(
+          `Detected PIN ${next.pincode} (±${next.accuracyM}m). Confirm or pick a nearby PIN if this looks wrong.`
+        );
+      } else {
+        setGpsMessage(
+          next.distanceKm != null
+            ? `Matched India Post PIN ${next.pincode} (~${next.distanceKm} km from postal centroid).`
+            : `Detected PIN ${next.pincode}.`
+        );
+      }
     } catch (err) {
       if (cancelledRef.current) return;
       setGpsStatus('error');
-      setGpsMessage(GPS_ERRORS[err?.code] || err?.message || 'Could not get GPS location.');
+      const msg = String(err?.message || '');
+      const timedOut = /timeout/i.test(msg);
+      setGpsMessage(
+        GPS_ERRORS[err?.code] ||
+          (timedOut
+            ? 'Request timed out. Check that the API is running, then try Get My Pincode again.'
+            : msg || 'Could not get GPS location.')
+      );
     }
   };
 
@@ -212,11 +155,19 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
         state: keepGps && preview.state ? preview.state : found.state,
         pincode: pin,
         displayName: keepGps ? preview.displayName : '',
-        // Always keep real GPS coordinates when available
-        lat: keepGps ? preview.lat : location?.lat ?? 28.628,
-        lng: keepGps ? preview.lng : location?.lng ?? 77.3649,
+        lat: keepGps
+          ? preview.lat
+          : Number.isFinite(Number(location?.lat))
+            ? Number(location.lat)
+            : null,
+        lng: keepGps
+          ? preview.lng
+          : Number.isFinite(Number(location?.lng))
+            ? Number(location.lng)
+            : null,
         accuracyM: keepGps ? preview.accuracyM : undefined,
         pinConfidence: 'high',
+        alternates: [],
         source: keepGps ? 'gps' : 'pincode'
       };
       setPreview(next);
@@ -228,13 +179,39 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
     }
   };
 
+  const pickAlternate = async (pin) => {
+    setPincode(pin);
+    setPinStatus('loading');
+    try {
+      const found = await lookupPincode(pin);
+      setPreview((prev) => ({
+        ...(prev || {}),
+        ...found,
+        pincode: pin,
+        lat: prev?.lat ?? location?.lat,
+        lng: prev?.lng ?? location?.lng,
+        accuracyM: prev?.accuracyM,
+        alternates: (prev?.alternates || []).filter((a) => a.pincode !== pin),
+        pinConfidence: 'medium',
+        source: prev?.source === 'gps' ? 'gps' : 'pincode'
+      }));
+      setPinStatus('success');
+      setPinMessage(`Switched to nearby PIN ${pin}. Confirm below.`);
+    } catch (err) {
+      setPinStatus('error');
+      setPinMessage(err.message || 'Could not switch PIN');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-slate-900/40 p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden">
         <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-black text-slate-900 tracking-tight">Delivery location</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Precise GPS, then confirm your pincode</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Get My Pincode from GPS (India Post match), or enter PIN
+            </p>
           </div>
           <button
             type="button"
@@ -256,7 +233,7 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
           >
             {gpsStatus === 'loading' ? (
               <span className="inline-flex items-center justify-center gap-2">
-                <span>Detecting the location</span>
+                <span>Detecting your pincode</span>
                 <span className="inline-flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce [animation-delay:-0.3s]" />
                   <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce [animation-delay:-0.15s]" />
@@ -264,14 +241,14 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
                 </span>
               </span>
             ) : (
-              'Use current location'
+              'Get My Pincode'
             )}
           </button>
 
           {gpsMessage && gpsStatus !== 'loading' ? (
             <p
               className={`text-[11px] font-semibold rounded-xl px-3 py-2 border ${
-                gpsStatus === 'error' || gpsStatus === 'unsupported'
+                gpsStatus === 'error'
                   ? 'text-rose-700 bg-rose-50 border-rose-100'
                   : 'text-slate-600 bg-slate-50 border-slate-100'
               }`}
@@ -304,7 +281,7 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
                     applyPincode();
                   }
                 }}
-                placeholder="e.g. 201301"
+                placeholder="6-digit PIN"
                 inputMode="numeric"
                 maxLength={6}
                 className="flex-1 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600"
@@ -347,8 +324,38 @@ export default function LocationModal({ open, location, onSelect, onClose }) {
                 )}
                 <p className="text-[11px] font-bold text-slate-700 mt-2">
                   PIN {preview.pincode || '— not detected'}
+                  {preview.accuracyM ? (
+                    <span className="ml-2 font-semibold text-slate-400">
+                      · GPS ±{preview.accuracyM}m
+                    </span>
+                  ) : null}
                 </p>
               </div>
+
+              {Array.isArray(preview.alternates) && preview.alternates.length > 0 ? (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+                    Nearby PINs (if yours looks wrong)
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {preview.alternates.map((a) => (
+                      <button
+                        key={a.pincode}
+                        type="button"
+                        onClick={() => pickAlternate(a.pincode)}
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-bold text-slate-700 hover:border-indigo-400 hover:text-indigo-700"
+                      >
+                        {a.pincode}
+                        {a.distanceKm != null ? (
+                          <span className="ml-1 font-semibold text-slate-400">
+                            {a.distanceKm}km
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               {!isValidIndianPin(preview.pincode) ? (
                 <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 font-semibold">

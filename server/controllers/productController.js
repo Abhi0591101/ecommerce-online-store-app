@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const StoreProductPricing = require('../models/StoreProductPricing');
+const { hasLocationQuery, resolveNearbyStores, distanceKm } = require('../utils/nearbyStores');
+const { isCustomerVisibleStore } = require('../utils/storeVisibility');
 
 const computeDeliveryFee = (itemPrice, store) => {
   if (store.freeDeliveryAbove > 0 && itemPrice >= store.freeDeliveryAbove) {
@@ -11,6 +13,7 @@ const computeDeliveryFee = (itemPrice, store) => {
 };
 
 // GET /api/products
+// Optional location: lat,lng,radiusKm,pincode,city → only products stocked by nearby/serviceable stores
 const getProducts = async (req, res, next) => {
   try {
     const { category, subcategory, search, q, brand, includeOutOfStock } = req.query;
@@ -23,6 +26,27 @@ const getProducts = async (req, res, next) => {
         { approvalStatus: null }
       ]
     };
+
+    let nearbyStoreIds = null;
+    let serviceable = null;
+    if (hasLocationQuery(req.query)) {
+      const nearby = await resolveNearbyStores(req.query);
+      nearbyStoreIds = nearby.storeIds || [];
+      serviceable = nearby.serviceable;
+      // No stores in area → empty catalog (not global fallback)
+      if (!nearbyStoreIds.length) {
+        return res.json({
+          success: true,
+          data: [],
+          meta: {
+            scopedToLocation: true,
+            storeCount: 0,
+            serviceable,
+            message: 'No stores serve this delivery area'
+          }
+        });
+      }
+    }
 
     if (category && category !== 'all' && category !== 'services' && category !== 'shops') {
       const categoryDoc = await Category.findOne({
@@ -82,33 +106,45 @@ const getProducts = async (req, res, next) => {
     if (includeOutOfStock !== '1' && includeOutOfStock !== 'true') {
       pricingFilter.stockQuantity = { $gt: 0 };
     }
+    if (nearbyStoreIds) {
+      pricingFilter.storeId = { $in: nearbyStoreIds };
+    }
 
     const pricingRows = await StoreProductPricing.find(pricingFilter).populate({
       path: 'storeId',
-      match: { isOnline: true, status: 'approved' }
+      match: { isOnline: true, status: 'approved', isActive: { $ne: false } }
     });
 
     const lowestByProduct = {};
+    const offersByProduct = {};
     for (const row of pricingRows) {
-      if (!row.storeId) continue;
+      if (!row.storeId || !isCustomerVisibleStore(row.storeId)) continue;
       const key = row.productId.toString();
+      const offer = {
+        storeId: row.storeId._id,
+        storeName: row.storeId.name,
+        storeRating: row.storeId.rating,
+        price: row.price,
+        stockQuantity: row.stockQuantity,
+        baseDeliveryFee: row.storeId.baseDeliveryFee,
+        freeDeliveryAbove: row.storeId.freeDeliveryAbove,
+        estDeliveryMins: row.storeId.estDeliveryMins,
+        deliveryFee: computeDeliveryFee(row.price, row.storeId),
+        pincode: row.storeId.pincode,
+        city: row.storeId.city
+      };
+      offer.totalCost = offer.price + (offer.deliveryFee || 0);
+      if (!offersByProduct[key]) offersByProduct[key] = [];
+      offersByProduct[key].push(offer);
       if (!lowestByProduct[key] || row.price < lowestByProduct[key].price) {
-        lowestByProduct[key] = {
-          price: row.price,
-          stockQuantity: row.stockQuantity,
-          storeId: row.storeId._id,
-          storeName: row.storeId.name,
-          storeRating: row.storeId.rating,
-          baseDeliveryFee: row.storeId.baseDeliveryFee,
-          freeDeliveryAbove: row.storeId.freeDeliveryAbove,
-          estDeliveryMins: row.storeId.estDeliveryMins
-        };
+        lowestByProduct[key] = offer;
       }
     }
 
     const data = products
       .map((product) => {
-        const lowest = lowestByProduct[product._id.toString()];
+        const key = product._id.toString();
+        const lowest = lowestByProduct[key];
         if (!lowest) return null;
 
         const savingsPercent = product.mrp > 0
@@ -124,15 +160,28 @@ const getProducts = async (req, res, next) => {
             rating: lowest.storeRating,
             baseDeliveryFee: lowest.baseDeliveryFee,
             freeDeliveryAbove: lowest.freeDeliveryAbove,
-            estDeliveryMins: lowest.estDeliveryMins
+            estDeliveryMins: lowest.estDeliveryMins,
+            pincode: lowest.pincode,
+            city: lowest.city
           },
+          storeOffers: (offersByProduct[key] || []).sort((a, b) => a.totalCost - b.totalCost),
           savingsPercent: Math.max(0, savingsPercent),
           inStock: true
         };
       })
       .filter(Boolean);
 
-    res.json({ success: true, data });
+    res.json({
+      success: true,
+      data,
+      meta: nearbyStoreIds
+        ? {
+            scopedToLocation: true,
+            storeCount: nearbyStoreIds.length,
+            serviceable
+          }
+        : { scopedToLocation: false }
+    });
   } catch (error) {
     next(error);
   }
@@ -158,20 +207,38 @@ const compareStores = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    const pricingRows = await StoreProductPricing.find({
+    let nearbyStoreIds = null;
+    if (hasLocationQuery(req.query)) {
+      const nearby = await resolveNearbyStores(req.query);
+      nearbyStoreIds = nearby.storeIds || [];
+    }
+
+    const pricingQuery = {
       productId: id,
       isAvailable: true,
       stockQuantity: { $gt: 0 }
-    }).populate('storeId');
+    };
+    if (nearbyStoreIds) {
+      pricingQuery.storeId = { $in: nearbyStoreIds };
+    }
+
+    const pricingRows = await StoreProductPricing.find(pricingQuery).populate('storeId');
+
+    const userLat = req.query.lat != null ? Number(req.query.lat) : null;
+    const userLng = req.query.lng != null ? Number(req.query.lng) : null;
 
     const comparisons = pricingRows
-      .filter((row) => row.storeId && row.storeId.isOnline && row.storeId.status === 'approved')
+      .filter((row) => row.storeId && isCustomerVisibleStore(row.storeId))
       .map((row) => {
         const store = row.storeId;
         const itemPrice = row.price;
         const deliveryFee = computeDeliveryFee(itemPrice, store);
         const totalCost = itemPrice + deliveryFee;
         const [lng, lat] = store.location?.coordinates || [];
+        const d =
+          userLat != null && userLng != null && lat != null && lng != null
+            ? distanceKm(userLat, userLng, lat, lng)
+            : null;
 
         return {
           storeId: store._id,
@@ -184,6 +251,7 @@ const compareStores = async (req, res, next) => {
           city: store.city,
           lat,
           lng,
+          distanceKm: d != null ? Number(d.toFixed(1)) : null,
           estDeliveryMins: store.estDeliveryMins,
           pickupAvailable: store.pickupAvailable,
           itemPrice,
@@ -346,6 +414,23 @@ const createProduct = async (req, res, next) => {
       approvalStatus: needsApproval ? 'pending' : 'approved',
       submittedBy: isSeller ? req.user._id : undefined
     });
+
+    if (needsApproval) {
+      try {
+        const { pushAdminAlert } = require('../utils/adminAlerts');
+        await pushAdminAlert({
+          type: 'product_approval',
+          title: 'Product pending approval',
+          body: product.name,
+          entityType: 'product',
+          entityId: product._id,
+          linkTab: 'products_pending',
+          dedupeKey: `product_approval:${product._id}`
+        });
+      } catch {
+        /* non-blocking */
+      }
+    }
 
     let pricingRows = [];
     if (Array.isArray(pricing) && pricing.length) {
@@ -646,16 +731,71 @@ const deleteProduct = async (req, res, next) => {
   }
 };
 
+async function attachSellerStores(products = []) {
+  const Store = require('../models/Store');
+  const StoreProductPricing = require('../models/StoreProductPricing');
+  const ownerIds = [
+    ...new Set(
+      products
+        .map((p) => p.submittedBy?._id || p.submittedBy)
+        .filter(Boolean)
+        .map(String)
+    )
+  ];
+  const productIds = products.map((p) => p._id).filter(Boolean);
+
+  const [stores, pricingRows] = await Promise.all([
+    ownerIds.length
+      ? Store.find({ ownerId: { $in: ownerIds } })
+          .select('name phone city pincode ownerId status')
+          .lean()
+      : [],
+    productIds.length
+      ? StoreProductPricing.find({ productId: { $in: productIds } })
+          .select('productId storeId price stockQuantity isAvailable')
+          .populate('storeId', 'name phone city ownerId')
+          .lean()
+      : []
+  ]);
+
+  const storeByOwner = new Map(stores.map((s) => [String(s.ownerId), s]));
+  const pricingByProduct = new Map();
+  for (const row of pricingRows) {
+    const key = String(row.productId);
+    if (!pricingByProduct.has(key)) pricingByProduct.set(key, []);
+    pricingByProduct.get(key).push(row);
+  }
+
+  return products.map((p) => {
+    const plain = typeof p.toObject === 'function' ? p.toObject() : { ...p };
+    const ownerId = plain.submittedBy?._id || plain.submittedBy;
+    const sellerStore = ownerId ? storeByOwner.get(String(ownerId)) || null : null;
+    const listings = pricingByProduct.get(String(plain._id)) || [];
+    const stockTotal = listings.reduce((s, r) => s + (Number(r.stockQuantity) || 0), 0);
+    return {
+      ...plain,
+      sellerStore,
+      sellerName: plain.submittedBy?.name || '',
+      sellerPhone: plain.submittedBy?.phone || '',
+      storeName: sellerStore?.name || listings[0]?.storeId?.name || '',
+      storeCity: sellerStore?.city || listings[0]?.storeId?.city || '',
+      stock: stockTotal,
+      listings
+    };
+  });
+}
+
 // GET /api/products/pending
 const getPendingProducts = async (req, res, next) => {
   try {
     const products = await Product.find({ approvalStatus: 'pending' })
       .populate('categoryId', 'name slug')
       .populate('subcategoryId', 'name slug')
-      .populate('submittedBy', 'name phone')
+      .populate('submittedBy', 'name phone email')
       .sort({ createdAt: -1 });
 
-    res.json({ success: true, data: products });
+    const data = await attachSellerStores(products);
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }
@@ -664,7 +804,7 @@ const getPendingProducts = async (req, res, next) => {
 // PATCH /api/products/:id/approval
 const patchProductApproval = async (req, res, next) => {
   try {
-    const { approvalStatus } = req.body;
+    const { approvalStatus, reason, decisionNote } = req.body;
     if (!['approved', 'pending', 'rejected'].includes(approvalStatus)) {
       return res.status(400).json({ success: false, message: 'Invalid approvalStatus' });
     }
@@ -675,11 +815,23 @@ const patchProductApproval = async (req, res, next) => {
     }
 
     product.approvalStatus = approvalStatus;
+    const note = String(reason || decisionNote || '').trim();
     if (approvalStatus === 'approved') {
       product.isActive = true;
       product.status = product.status === 'draft' ? 'active' : product.status;
+      product.rejectionReason = '';
+    } else if (approvalStatus === 'rejected' && note) {
+      product.rejectionReason = note;
     }
     await product.save();
+    if (approvalStatus === 'approved' || approvalStatus === 'rejected') {
+      try {
+        const { resolveAlertsForEntity } = require('../utils/adminAlerts');
+        await resolveAlertsForEntity(product._id, ['product_approval']);
+      } catch {
+        /* ignore */
+      }
+    }
 
     const Store = require('../models/Store');
     const { notifyProductApproval } = require('../utils/sellerNotifications');

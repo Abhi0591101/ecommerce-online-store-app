@@ -17,7 +17,7 @@ export default function ProductCard({ product, stores = [], onCompare, onNeedLog
   const offers = (product.storeOffers || [])
     .map((offer) => {
       const store = stores.find((s) => String(s._id) === String(offer.storeId));
-      if (!store || store.isOnline === false) return null;
+      if (!store || store.isOnline === false || store.isActive === false) return null;
       const deliveryFee =
         offer.deliveryFee ??
         (offer.price >= (store.freeDeliveryAbove || 500) ? 0 : store.baseDeliveryFee || store.deliveryFee || 0);
@@ -34,19 +34,24 @@ export default function ProductCard({ product, stores = [], onCompare, onNeedLog
     .filter(Boolean)
     .sort((a, b) => a.totalCost - b.totalCost);
 
-  const bestOffer = offers[0] || (product.lowestStore
-    ? {
-        store: {
-          _id: product.lowestStore.storeId,
-          name: product.lowestStore.name,
-          baseDeliveryFee: product.lowestStore.baseDeliveryFee,
-          freeDeliveryAbove: product.lowestStore.freeDeliveryAbove,
-          estDeliveryMins: product.lowestStore.estDeliveryMins,
-          rating: product.lowestStore.rating
-        },
-        price: minPrice
-      }
-    : null);
+  // Only use lowestStore when that store is in the customer's nearby/serviceable list
+  const nearbyLowest =
+    product.lowestStore &&
+    stores.some((s) => String(s._id) === String(product.lowestStore.storeId))
+      ? {
+          store: {
+            _id: product.lowestStore.storeId,
+            name: product.lowestStore.name,
+            baseDeliveryFee: product.lowestStore.baseDeliveryFee,
+            freeDeliveryAbove: product.lowestStore.freeDeliveryAbove,
+            estDeliveryMins: product.lowestStore.estDeliveryMins,
+            rating: product.lowestStore.rating
+          },
+          price: minPrice
+        }
+      : null;
+
+  const bestOffer = offers[0] || nearbyLowest;
 
   const hasFreeDelivery = offers.some((o) => o.deliveryFee === 0);
 

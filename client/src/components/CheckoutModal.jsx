@@ -21,12 +21,12 @@ export default function CheckoutModal({
   const { user, isAuthenticated } = useAuth();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [pincode, setPincode] = useState(location?.pincode || '201301');
+  const [pincode, setPincode] = useState(location?.pincode || '');
   const [address, setAddress] = useState('');
   const [paymentMode, setPaymentMode] = useState('COD');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [upiOpen, setUpiOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
   const [pendingOrder, setPendingOrder] = useState(null);
   const [step, setStep] = useState('form'); // form | review
   const [addresses, setAddresses] = useState([]);
@@ -52,7 +52,7 @@ export default function CheckoutModal({
             setAddress(
               [def.flatBuilding, def.streetArea, def.city].filter(Boolean).join(', ')
             );
-            setPincode(def.pincode || location?.pincode || '201301');
+            setPincode(def.pincode || location?.pincode || '');
           }
         })
         .catch(() => {});
@@ -65,7 +65,7 @@ export default function CheckoutModal({
       setAddress(
         `Flat / Tower, ${location?.area || location?.city || 'your area'}`
       );
-      setPincode(location?.pincode || '201301');
+      setPincode(location?.pincode || '');
     }
   }, [open, user, location]);
 
@@ -79,7 +79,7 @@ export default function CheckoutModal({
 
   const sellerLabel = selectedStore?.name || cart[0]?.storeName || 'Seller';
 
-  if (!open && !upiOpen) return null;
+  if (!open && !payOpen) return null;
 
   const isPickup = fulfillmentMode === 'pickup';
 
@@ -125,7 +125,9 @@ export default function CheckoutModal({
       couponCode: discount > 0 ? couponCode : '',
       discountAmount: discount,
       walletUsed: walletUseAmt,
-      paymentTxnId: payMeta.paymentTxnId || ''
+      paymentTxnId: payMeta.paymentTxnId || '',
+      razorpayOrderId: payMeta.razorpayOrderId || '',
+      razorpayPaymentId: payMeta.razorpayPaymentId || ''
     });
 
     const baseMeta = buildLocalOrder(payMeta);
@@ -144,7 +146,9 @@ export default function CheckoutModal({
         grandTotal: data.grandTotal ?? payable,
         status: data.status || 'placed',
         orderId: data.orderId || data._id,
-        paymentStatus: payMeta.paymentStatus || data.paymentStatus || baseMeta.paymentStatus
+        paymentMode: data.paymentMode || payMeta.paymentMode || baseMeta.paymentMode,
+        paymentStatus: data.paymentStatus || payMeta.paymentStatus || baseMeta.paymentStatus,
+        paymentTxnId: data.paymentTxnId || payMeta.paymentTxnId || ''
       });
     } catch (err) {
       setError(err.message || 'Order failed');
@@ -179,15 +183,15 @@ export default function CheckoutModal({
       return;
     }
 
-    if (paymentMode === 'UPI') {
-      setPendingOrder(buildLocalOrder({ paymentMode: 'UPI', paymentStatus: 'PENDING' }));
-      setUpiOpen(true);
+    if (paymentMode === 'ONLINE') {
+      setPendingOrder(buildLocalOrder({ paymentMode: 'ONLINE', paymentStatus: 'pending' }));
+      setPayOpen(true);
       return;
     }
 
     setSubmitting(true);
     try {
-      await finalizeOrder({ paymentMode: 'COD', paymentStatus: 'PENDING' });
+      await finalizeOrder({ paymentMode: 'COD', paymentStatus: 'pending' });
       onClose();
     } catch {
       /* error shown */
@@ -196,17 +200,22 @@ export default function CheckoutModal({
     }
   };
 
-  const handleUpiPaid = async (payMeta) => {
+  const handleOnlinePaid = async (payMeta) => {
     setSubmitting(true);
-    await finalizeOrder({
-      paymentMode: 'UPI',
-      paymentStatus: 'PAID',
-      ...payMeta
-    });
-    setUpiOpen(false);
-    setPendingOrder(null);
-    setSubmitting(false);
-    onClose();
+    try {
+      await finalizeOrder({
+        paymentMode: payMeta.paymentMode || 'ONLINE',
+        paymentStatus: 'paid',
+        ...payMeta
+      });
+      setPayOpen(false);
+      setPendingOrder(null);
+      onClose();
+    } catch {
+      /* error shown in checkout */
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -363,7 +372,17 @@ export default function CheckoutModal({
                     onChange={(e) => {
                       const a = addresses.find((x) => String(x._id) === e.target.value);
                       if (!a) return;
-                      setAddress([a.flatBuilding, a.streetArea, a.city].filter(Boolean).join(', '));
+                      setAddress(
+                        [
+                          a.flatBuilding,
+                          a.streetArea,
+                          a.landmark,
+                          a.city,
+                          a.state
+                        ]
+                          .filter(Boolean)
+                          .join(', ')
+                      );
                       setPincode(a.pincode || pincode);
                     }}
                     defaultValue=""
@@ -371,7 +390,7 @@ export default function CheckoutModal({
                     <option value="">Saved addresses…</option>
                     {addresses.map((a) => (
                       <option key={a._id} value={a._id}>
-                        {a.tag}: {a.flatBuilding} {a.pincode}
+                        {a.fullName || a.tag}: {a.flatBuilding} {a.pincode}
                       </option>
                     ))}
                   </select>
@@ -409,7 +428,7 @@ export default function CheckoutModal({
 
                   <label
                     className={`flex items-center justify-between p-3 rounded-2xl border cursor-pointer ${
-                      paymentMode === 'UPI'
+                      paymentMode === 'ONLINE'
                         ? 'border-indigo-600 bg-indigo-50/40'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
@@ -418,14 +437,18 @@ export default function CheckoutModal({
                       <input
                         type="radio"
                         name="paymentMode"
-                        value="UPI"
-                        checked={paymentMode === 'UPI'}
-                        onChange={() => setPaymentMode('UPI')}
+                        value="ONLINE"
+                        checked={paymentMode === 'ONLINE'}
+                        onChange={() => setPaymentMode('ONLINE')}
                         className="text-indigo-600 focus:ring-indigo-500"
                       />
                       <div>
-                        <span className="font-bold text-slate-900 block">📱 Instant UPI QR</span>
-                        <span className="text-slate-500 text-[11px]">Google Pay, PhonePe, Paytm QR • Razorpay sandbox</span>
+                        <span className="font-bold text-slate-900 block">
+                          Pay online (UPI / Card / Netbanking)
+                        </span>
+                        <span className="text-slate-500 text-[11px]">
+                          Razorpay — GPay, PhonePe, cards & more
+                        </span>
                       </div>
                     </div>
                   </label>
@@ -445,8 +468,8 @@ export default function CheckoutModal({
                     ? 'Placing Order…'
                     : step === 'form'
                       ? `Review order • ₹${payable}`
-                      : paymentMode === 'UPI'
-                        ? `Pay ₹${payable} via UPI`
+                      : paymentMode === 'ONLINE'
+                        ? `Pay ₹${payable} online`
                         : `Confirm & place • ₹${payable}`}
                 </span>
               </button>
@@ -456,14 +479,15 @@ export default function CheckoutModal({
       )}
 
       <PaymentModal
-        open={upiOpen}
+        open={payOpen}
         amount={payable}
         orderPreview={pendingOrder}
+        customer={{ name, phone, email: user?.email || '' }}
         onClose={() => {
-          setUpiOpen(false);
+          setPayOpen(false);
           setPendingOrder(null);
         }}
-        onPaid={handleUpiPaid}
+        onPaid={handleOnlinePaid}
       />
     </>
   );

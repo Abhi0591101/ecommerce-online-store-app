@@ -43,7 +43,17 @@ const StoreSchema = new mongoose.Schema({
   dealsInFood: { type: Boolean, default: false },
   fssaiDocUrl: { type: String, default: '' },
   registrationFeePaid: { type: Boolean, default: false },
-  registrationFeeAmount: { type: Number, default: 500 }
+  registrationFeeAmount: { type: Number, default: 216 },
+  registrationFeeTxnId: { type: String, default: '' },
+  registrationFeeRazorpayOrderId: { type: String, default: '' },
+  registrationFeePaidAt: { type: Date },
+  /** Shop promoters (same pattern as franchise) */
+  promoters: [
+    {
+      name: { type: String, default: '' },
+      phone: { type: String, default: '' }
+    }
+  ]
 }, { timestamps: true });
 
 StoreSchema.index({ location: '2dsphere' });

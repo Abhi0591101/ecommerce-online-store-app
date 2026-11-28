@@ -174,6 +174,12 @@ const verifyOtp = async (req, res, next) => {
     order.status = 'completed';
     order.paymentStatus = order.paymentMode === 'COD' ? 'paid' : order.paymentStatus;
     await order.save();
+    try {
+      const { postFranchiseCommissionOnComplete } = require('../utils/franchiseCommission');
+      await postFranchiseCommissionOnComplete(order);
+    } catch {
+      /* ignore */
+    }
 
     const delivery = await Delivery.findOneAndUpdate(
       { orderId: order._id },

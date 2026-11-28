@@ -35,6 +35,7 @@ const ProductSchema = new mongoose.Schema(
       enum: ['approved', 'pending', 'rejected'],
       default: 'approved'
     },
+    rejectionReason: { type: String, default: '' },
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }

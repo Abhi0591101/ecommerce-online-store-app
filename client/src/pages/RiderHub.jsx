@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import NotificationBell from '../components/NotificationBell';
+import PasswordStrengthMeter from '../components/PasswordStrengthMeter';
 import { useAuth } from '../context/AuthContext';
 import {
   acceptDeliveryApi,
@@ -10,6 +12,7 @@ import {
   getRiderProfile,
   getRiderRequests,
   getRiderStats,
+  markAllRiderNotificationsRead,
   markRiderNotificationRead,
   patchDeliveryStatusApi,
   patchRiderProfile,
@@ -529,7 +532,7 @@ export default function RiderHub({ onNavigateCustomer, onNavigateAdmin, onLogout
             Storefront
           </Btn>
           {onNavigateAdmin ? (
-            <Btn onClick={onNavigateAdmin}>Admin</Btn>
+            <Btn onClick={onNavigateAdmin}>{!user ? 'Login (OTP)' : 'Admin'}</Btn>
           ) : null}
           {onLogout ? (
             <Btn onClick={onLogout}>Logout</Btn>
@@ -989,6 +992,25 @@ export default function RiderHub({ onNavigateCustomer, onNavigateAdmin, onLogout
                 Admin approval required to go on duty
               </span>
             ) : null}
+            <NotificationBell
+              title="Rider notifications"
+              fetchInbox={async () => {
+                const res = await getRiderNotifications();
+                const rows = res?.data ?? res ?? [];
+                const list = Array.isArray(rows) ? rows : [];
+                return {
+                  items: list.map((n) => ({
+                    ...n,
+                    id: n._id,
+                    body: n.body || ''
+                  })),
+                  unread: list.filter((n) => !n.read).length
+                };
+              }}
+              onMarkRead={(n) => markRiderNotificationRead(n._id || n.id)}
+              onMarkAllRead={markAllRiderNotificationsRead}
+              onItemClick={() => setTab('notifications')}
+            />
             <Btn onClick={onNavigateCustomer}>Storefront</Btn>
             {onNavigateAdmin ? <Btn onClick={onNavigateAdmin}>Admin</Btn> : null}
             <Btn onClick={refresh}>Refresh</Btn>
@@ -1113,7 +1135,15 @@ function motionSellerFields({ reqForm, setReqForm, inputCls }) {
 
 function PartnerSignupHint({ notify, sendRiderOtp, registerDeliveryBoy }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', phone: '', otp: '', email: '' });
+  const [form, setForm] = useState({
+    name: '',
+    phone: '',
+    otp: '',
+    email: '',
+    password: '',
+    vehicleType: '',
+    city: ''
+  });
   const [otpSent, setOtpSent] = useState(false);
 
   const sendOtp = async () => {
@@ -1122,9 +1152,15 @@ function PartnerSignupHint({ notify, sendRiderOtp, registerDeliveryBoy }) {
       return;
     }
     try {
-      await sendRiderOtp({ phone: form.phone, purpose: 'register' });
+      const res = await sendRiderOtp({ phone: form.phone, purpose: 'register' });
       setOtpSent(true);
-      notify('OTP sent (check demo OTP in dev)');
+      const code = res?.demoOtp || res?.otp;
+      if (code) {
+        setForm((f) => ({ ...f, otp: String(code) }));
+        notify(res?.message || `OTP sent. Use ${code}`);
+      } else {
+        notify(res?.message || 'OTP sent to your mobile');
+      }
     } catch (e) {
       notify(e?.message || 'OTP send failed');
     }
@@ -1132,9 +1168,13 @@ function PartnerSignupHint({ notify, sendRiderOtp, registerDeliveryBoy }) {
 
   const register = async (e) => {
     e.preventDefault();
+    if (!form.password || String(form.password).length < 6) {
+      notify('Password required (min 6 characters)');
+      return;
+    }
     try {
       await registerDeliveryBoy(form);
-      notify('Registration submitted — await Admin approval');
+      notify('Registration submitted — await Admin approval, then login with OTP');
       setOpen(false);
     } catch (err) {
       notify(err?.message || 'Registration failed');
@@ -1154,14 +1194,14 @@ function PartnerSignupHint({ notify, sendRiderOtp, registerDeliveryBoy }) {
         <form onSubmit={register} className="mt-3 space-y-2">
           <input
             className={inputCls}
-            placeholder="Full name"
+            placeholder="Full name *"
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             required
           />
           <input
             className={inputCls}
-            placeholder="Phone"
+            placeholder="Phone *"
             value={form.phone}
             onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
             required
@@ -1172,10 +1212,32 @@ function PartnerSignupHint({ notify, sendRiderOtp, registerDeliveryBoy }) {
             value={form.email}
             onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
           />
+          <input
+            className={inputCls}
+            type="password"
+            placeholder="Create password * (min 6)"
+            value={form.password}
+            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            required
+            minLength={6}
+          />
+          <PasswordStrengthMeter password={form.password} />
+          <input
+            className={inputCls}
+            placeholder="Vehicle type (optional)"
+            value={form.vehicleType}
+            onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}
+          />
+          <input
+            className={inputCls}
+            placeholder="City (optional)"
+            value={form.city}
+            onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
+          />
           <div className="flex gap-2">
             <input
               className={`${inputCls} flex-1`}
-              placeholder="OTP"
+              placeholder="OTP *"
               value={form.otp}
               onChange={(e) => setForm((f) => ({ ...f, otp: e.target.value }))}
               required

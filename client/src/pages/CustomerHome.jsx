@@ -18,14 +18,24 @@ import { useCart } from '../context/CartContext';
 import { useLanguage } from '../context/LanguageContext';
 import { usePlatform } from '../context/PlatformContext';
 import { withStoreDistances } from '../utils/geo';
+import { hasUsableDeliveryLocation } from '../utils/detectLocation';
 
-export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, dashboardLabel }) {
+export default function CustomerHome({
+  onOpenLogin,
+  onLogout,
+  onGoDashboard,
+  dashboardLabel,
+  onOpenFranchise
+}) {
   const { user, isAuthenticated } = useAuth();
   const { language, setLanguage } = useLanguage();
   const { totals } = useCart();
   const {
     location,
     setLocation,
+    locationDetecting,
+    needLocationPicker,
+    setNeedLocationPicker,
     categories,
     mainCategories,
     products,
@@ -90,61 +100,86 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
   const [accountOpen, setAccountOpen] = useState(false);
   const [brandFilter, setBrandFilter] = useState('');
   const [priceSort, setPriceSort] = useState(''); // low | high | ''
+  const [catalogLoading, setCatalogLoading] = useState(false);
+
+  const isLocating = Boolean(locationDetecting || location?.detecting);
+  const catalogReady = hasUsableDeliveryLocation(location);
+  const isCatalogProcessing = isLocating || catalogLoading || (!catalogReady && !needLocationPicker);
 
   const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true);
     try {
+      const canFetch = hasUsableDeliveryLocation(location);
+      const locQuery = canFetch
+        ? {
+            lat: location.lat,
+            lng: location.lng,
+            city: location.city,
+            radiusKm: location.radiusKm || 40,
+            pincode: location.pincode
+          }
+        : null;
       const [catRes, prodRes, storeRes] = await Promise.all([
         getCategories(),
-        getProducts({
-          category:
-            activeCategory === 'all' || activeCategory === 'services' || activeCategory === 'shops'
-              ? undefined
-              : activeCategory,
-          search: searchQuery || undefined
-        }),
-        getStores({
-          lat: location.lat,
-          lng: location.lng,
-          city: location.city,
-          radiusKm: location.radiusKm || 40,
-          pincode: location.pincode
-        })
+        locQuery
+          ? getProducts({
+              category:
+                activeCategory === 'all' ||
+                activeCategory === 'services' ||
+                activeCategory === 'shops'
+                  ? undefined
+                  : activeCategory,
+              search: searchQuery || undefined,
+              ...locQuery
+            })
+          : Promise.resolve({ data: [] }),
+        locQuery ? getStores(locQuery) : Promise.resolve({ data: [] })
       ]);
 
       // Keep full main+sub list so seller listing dropdowns stay valid
       if (catRes?.data?.length) setCategories(catRes.data);
-      if (prodRes?.data) {
+      if (!canFetch) {
+        setProducts([]);
+        setStores([]);
+      } else if (prodRes?.data) {
         const enriched = prodRes.data.map((p) => ({
           ...p,
           categorySlug: p.categoryId?.slug || p.categorySlug,
-          storeOffers: p.lowestStore
-            ? [
-                {
-                  storeId: p.lowestStore.storeId,
-                  price: p.lowestPrice,
-                  stockQuantity: 50,
-                  deliveryFee:
-                    p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
-                      ? 0
-                      : p.lowestStore.baseDeliveryFee || 0,
-                  totalCost:
-                    p.lowestPrice +
-                    (p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
-                      ? 0
-                      : p.lowestStore.baseDeliveryFee || 0)
-                }
-              ]
-            : []
+          storeOffers:
+            Array.isArray(p.storeOffers) && p.storeOffers.length
+              ? p.storeOffers
+              : p.lowestStore
+                ? [
+                    {
+                      storeId: p.lowestStore.storeId,
+                      price: p.lowestPrice,
+                      stockQuantity: 50,
+                      deliveryFee:
+                        p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
+                          ? 0
+                          : p.lowestStore.baseDeliveryFee || 0,
+                      totalCost:
+                        p.lowestPrice +
+                        (p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
+                          ? 0
+                          : p.lowestStore.baseDeliveryFee || 0)
+                    }
+                  ]
+                : []
         }));
         setProducts(enriched);
+      } else {
+        setProducts([]);
       }
-      if (storeRes?.data?.length) {
+      if (canFetch && Array.isArray(storeRes?.data)) {
         setStores(withStoreDistances(storeRes.data, location));
       }
       const live = !catRes?.offline && !prodRes?.offline && !storeRes?.offline;
       setApiOnline(live);
     } catch {
       setApiOnline(false);
+    } finally {
+      setCatalogLoading(false);
     }
   }, [activeCategory, searchQuery, location, setCategories, setProducts, setStores]);
 
@@ -334,6 +369,9 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
       <Header
         location={location}
         onLocationChange={setLocation}
+        locationDetecting={locationDetecting}
+        needLocationPicker={needLocationPicker}
+        onLocationPickerHandled={() => setNeedLocationPicker(false)}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onOpenOrders={() => {
@@ -346,6 +384,7 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
         }}
         onOpenLogin={onOpenLogin}
         onLogout={onLogout}
+        onOpenFranchise={onOpenFranchise}
         dashboardLabel={dashboardLabel || (user?.role === 'customer' ? '👤 My Account' : null)}
         onGoDashboard={() => {
           // Customer → My Account panel only (never staff / Admin login)
@@ -360,6 +399,14 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
           onGoDashboard?.();
         }}
       />
+
+      {isCatalogProcessing ? (
+        <div className="sticky top-16 z-30 bg-white/95 border-b border-slate-100 backdrop-blur-sm">
+          <div className="catalog-progress-track rounded-none h-1">
+            <div className="catalog-progress-bar" />
+          </div>
+        </div>
+      ) : null}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         {!apiOnline && (
@@ -496,13 +543,31 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
                 </div>
               </div>
 
-              {filteredProducts.length === 0 ? (
+              {isCatalogProcessing ? (
+                <div className="py-14 bg-white rounded-3xl p-8 border border-slate-100">
+                  <p className="text-center text-sm font-black text-slate-700 tracking-wide">
+                    Processing…
+                  </p>
+                  <p className="text-center text-xs font-semibold text-slate-400 mt-1 mb-5">
+                    {isLocating
+                      ? 'Finding your delivery PIN'
+                      : 'Loading products for your location'}
+                  </p>
+                  <div className="catalog-progress-track max-w-md mx-auto">
+                    <div className="catalog-progress-bar" />
+                  </div>
+                </div>
+              ) : filteredProducts.length === 0 ? (
                 <div className="py-16 text-center text-slate-500 bg-white rounded-3xl p-8 border border-slate-100">
                   <p className="font-bold text-slate-800 text-lg">No products found</p>
                   <p className="text-sm text-slate-400 mt-1">
                     {storeFilterId
                       ? 'This store has no matching catalog items in the current filter.'
-                      : 'Try another category or clear search.'}
+                      : needLocationPicker || !location?.pincode
+                        ? 'Set your delivery PIN to see products near you.'
+                        : !stores?.length
+                          ? `No stores serve ${location?.pincode || location?.city || 'this area'} yet. Try another delivery PIN.`
+                          : 'Try another category or clear search.'}
                   </p>
                 </div>
               ) : (
@@ -660,6 +725,7 @@ export default function CustomerHome({ onOpenLogin, onLogout, onGoDashboard, das
       <CustomerAccountPanel
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
+        onLogout={onLogout}
         onOpenOrders={() => {
           setAccountOpen(false);
           setOrdersOpen(true);

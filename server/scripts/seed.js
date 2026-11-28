@@ -14,6 +14,8 @@ const Order = require('../models/Order');
 const Delivery = require('../models/Delivery');
 const Service = require('../models/Service');
 const ServiceArea = require('../models/ServiceArea');
+const Franchise = require('../models/Franchise');
+const FranchiseNotification = require('../models/FranchiseNotification');
 const { buildCategorySeedDocs } = require('./japtoCategories');
 
 const SEED_LOCATIONS = [
@@ -796,6 +798,8 @@ const seed = async () => {
       Category.deleteMany({}),
       Service.deleteMany({}),
       ServiceArea.deleteMany({}),
+      FranchiseNotification.deleteMany({}),
+      Franchise.deleteMany({}),
       User.deleteMany({})
     ]);
 
@@ -897,6 +901,78 @@ const seed = async () => {
       role: 'superadmin',
       status: 'approved'
     });
+
+    console.log('Seeding franchise...');
+    const franchiseDoc = await Franchise.create({
+      applicationId: 'JAPTO-FR-2026-0001',
+      name: 'Jhansi City Franchise',
+      ownerName: 'Ramesh Franchise',
+      phone: '9811776655',
+      email: 'franchise@hyperlocal.test',
+      city: 'Jhansi',
+      state: 'UP',
+      pincode: '284001',
+      pinCodes: ['284001', '284002'],
+      houseNo: '12',
+      streetArea: 'Civil Lines',
+      address: '12, Civil Lines, Jhansi, UP, 284001',
+      businessExperience: 'experienced',
+      message: 'Ready to operate Jhansi PINs',
+      promoters: [{ name: 'Suresh', phone: '9811001122' }],
+      franchiseFee: 350000,
+      gstAmount: 63000,
+      deliveryCommissionPct: 5,
+      bankAccountHolder: 'Ramesh Franchise',
+      bankAccountNumber: '123456789012',
+      bankIfsc: 'SBIN0001234',
+      feeNonRefundable: true,
+      agreementYears: 5,
+      status: 'approved',
+      isActive: true,
+      commissionLedger: [
+        {
+          amount: 2400,
+          note: 'Week commission',
+          weekOf: new Date().toISOString().slice(0, 10),
+          status: 'paid',
+          at: new Date()
+        },
+        {
+          amount: 1800,
+          note: 'Pending week',
+          weekOf: new Date().toISOString().slice(0, 10),
+          status: 'pending',
+          at: new Date()
+        }
+      ],
+      paymentHistory: [
+        { amount: 2400, note: 'Weekly payout', status: 'paid', paidAt: new Date() }
+      ]
+    });
+
+    const franchiseUser = await User.create({
+      name: 'Ramesh Franchise',
+      phone: '9811776655',
+      email: 'franchise@hyperlocal.test',
+      password: passwordHash,
+      role: 'franchise',
+      status: 'approved',
+      franchiseId: franchiseDoc._id,
+      city: 'Jhansi',
+      fullAddress: franchiseDoc.address
+    });
+    franchiseDoc.ownerUserId = franchiseUser._id;
+    await franchiseDoc.save();
+
+    await FranchiseNotification.create({
+      franchiseId: franchiseDoc._id,
+      type: 'notice',
+      title: 'Welcome to Japto Franchise',
+      body: 'Head Office notices will appear here.'
+    });
+
+    // Link demo rider to franchise city for overview counts
+    await User.findByIdAndUpdate(driver._id, { franchiseId: franchiseDoc._id, city: 'Jhansi' });
 
     console.log('Seeding Japto category master (main + subcategories)...');
     const { mains, subs } = buildCategorySeedDocs();
@@ -1048,7 +1124,7 @@ const seed = async () => {
     console.log(`   Services: ${services.length}`);
     console.log(`   Locations: ${locations.length}`);
     console.log(`   Users: customer=${customer.phone}, driver=${driver.phone}, admin=${superadmin.phone}`);
-    console.log('   Default password for all seeded users: password123');
+    console.log('   Logins require OTP (no shared demo password on the login UI).');
 
     process.exit(0);
   } catch (error) {

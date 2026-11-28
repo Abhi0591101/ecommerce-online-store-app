@@ -6,11 +6,20 @@ const CartContext = createContext(null);
 
 export { API_BASE };
 
-export async function fetchLiveCatalog({ lat = 28.628, lng = 77.3649, category, search } = {}) {
+export async function fetchLiveCatalog({
+  lat = 28.628,
+  lng = 77.3649,
+  pincode,
+  city,
+  radiusKm = 40,
+  category,
+  search
+} = {}) {
+  const loc = { lat, lng, pincode, city, radiusKm };
   const [categories, products, stores] = await Promise.all([
     getCategories(),
-    getProducts({ category, search }),
-    getStores({ lat, lng })
+    getProducts({ category, search, ...loc }),
+    getStores(loc)
   ]);
   return {
     categories: categories?.data || [],
@@ -219,13 +228,15 @@ export function CartProvider({ children }) {
       fulfillmentMode === 'pickup'
         ? selectedStore?.address || 'Store Pickup'
         : customer.address,
-    pincode: customer.pincode || '201301',
+    pincode: customer.pincode || '',
     paymentMode: customer.paymentMode || 'COD',
     customerId: customer.customerId,
     couponCode: customer.couponCode || '',
     discountAmount: customer.discountAmount || 0,
     walletUsed: customer.walletUsed || 0,
-    paymentTxnId: customer.paymentTxnId || ''
+    paymentTxnId: customer.paymentTxnId || '',
+    razorpayOrderId: customer.razorpayOrderId || '',
+    razorpayPaymentId: customer.razorpayPaymentId || ''
   });
 
   const value = {

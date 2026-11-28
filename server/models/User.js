@@ -2,20 +2,38 @@ const mongoose = require('mongoose');
 
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  phone: { type: String, required: true, unique: true },
-  email: { type: String, unique: true, sparse: true },
+  // Same mobile may exist across roles (e.g. franchise owner + customer shopper)
+  phone: { type: String, required: true },
+  email: { type: String, sparse: true },
   password: { type: String },
   role: {
     type: String,
-    enum: ['customer', 'store_owner', 'driver', 'superadmin'],
+    enum: ['customer', 'store_owner', 'driver', 'franchise', 'superadmin'],
     default: 'customer'
   },
+  /** Link driver / franchise user to a Franchise record */
+  franchiseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Franchise', default: null },
   addresses: [{
     tag: { type: String, default: 'Home' },
+    fullName: { type: String, default: '' },
+    mobile: { type: String, default: '' },
     flatBuilding: String,
     streetArea: String,
+    landmark: { type: String, default: '' },
     pincode: String,
     city: String,
+    state: { type: String, default: '' },
+    addressType: {
+      type: String,
+      enum: ['House', 'Apartment', 'Business', 'Other'],
+      default: 'House'
+    },
+    weekendDelivery: {
+      type: String,
+      enum: ['', 'yes', 'no'],
+      default: ''
+    },
+    deliveryInstructions: { type: String, default: '' },
     lat: Number,
     lng: Number,
     isDefault: { type: Boolean, default: false }
@@ -65,6 +83,7 @@ const UserSchema = new mongoose.Schema({
   ],
   // Customer panel
   phoneVerified: { type: Boolean, default: false },
+  emailVerified: { type: Boolean, default: false },
   preferredLanguage: { type: String, enum: ['en', 'hi'], default: 'en' },
   walletBalance: { type: Number, default: 0 },
   referralCode: { type: String, default: '', index: true },
@@ -81,5 +100,12 @@ const UserSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 UserSchema.index({ role: 1, status: 1 });
+// One phone per role — same number OK for customer + franchise + seller, etc.
+UserSchema.index({ phone: 1, role: 1 }, { unique: true });
+// One email per role when email is set
+UserSchema.index(
+  { email: 1, role: 1 },
+  { unique: true, partialFilterExpression: { email: { $type: 'string' } } }
+);
 
 module.exports = mongoose.model('User', UserSchema);

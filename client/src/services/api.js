@@ -65,6 +65,9 @@ api.interceptors.response.use(
 
 // --- Auth ---
 export const login = (payload) => api.post('/auth/login', payload);
+export const sendPortalOtp = (payload) => api.post('/auth/send-otp', payload);
+export const loginWithOtp = (payload) => api.post('/auth/login-otp', payload);
+export const logoutApi = () => api.post('/auth/logout');
 export const register = (payload) => api.post('/auth/register', payload);
 export const fetchMe = () => api.get('/auth/me');
 export const sendSellerOtp = (payload) => api.post('/auth/seller/send-otp', payload);
@@ -136,14 +139,17 @@ export const toggleStoreStatus = (storeId) =>
 
 // --- Products ---
 export const getProducts = (params = {}) => api.get('/products', { params });
-export const getProductComparison = (productId) =>
-  api.get(`/products/${productId}/compare-stores`);
+export const getProductComparison = (productId, params = {}) =>
+  api.get(`/products/${productId}/compare-stores`, { params });
 export const createProduct = (payload) => api.post('/products', payload);
 export const updateProduct = (id, payload) => api.patch(`/products/${id}`, payload);
 export const deleteProduct = (id) => api.delete(`/products/${id}`);
 export const getPendingProducts = () => api.get('/products/pending');
-export const patchProductApproval = (id, approvalStatus) =>
-  api.patch(`/products/${id}/approval`, { approvalStatus });
+export const patchProductApproval = (id, approvalStatus, reason) =>
+  api.patch(`/products/${id}/approval`, {
+    approvalStatus,
+    ...(reason ? { reason, decisionNote: reason } : {})
+  });
 export const upsertPricingMatrix = (payload) =>
   api.post('/products/pricing-matrix', payload);
 export const updateStorePricing = (payload) =>
@@ -173,7 +179,7 @@ export const deleteService = (id) => api.delete(`/services/${id}`);
 // --- Locations ---
 export const getLocations = (params = {}) => api.get('/locations', { params });
 export const reverseGeocode = (lat, lng) =>
-  api.get('/locations/reverse', { params: { lat, lng } });
+  api.get('/locations/reverse', { params: { lat, lng }, timeout: 20000 });
 export const createLocation = (payload) => api.post('/locations', payload);
 
 // --- Riders ---
@@ -190,6 +196,13 @@ export const placeOrder = (orderData) => api.post('/orders', orderData);
 export const getOrders = (params = {}) => api.get('/orders', { params });
 export const updateOrderStatus = (orderIdOrNumber, status, extra = {}) =>
   api.patch(`/orders/${orderIdOrNumber}/status`, { status, ...extra });
+
+// --- Payments (Razorpay) ---
+export const getRazorpayConfig = () => api.get('/payments/razorpay/config');
+export const createRazorpayOrder = (payload) =>
+  api.post('/payments/razorpay/create-order', payload);
+export const verifyRazorpayPayment = (payload) =>
+  api.post('/payments/razorpay/verify', payload);
 
 // --- Delivery ---
 export const trackDelivery = (orderNumber) =>
@@ -260,6 +273,10 @@ export const patchAdminBanner = (id, payload) => api.patch(`/admin/banners/${id}
 export const deleteAdminBanner = (id) => api.delete(`/admin/banners/${id}`);
 export const getAdminNotifications = () => api.get('/admin/notifications');
 export const sendAdminNotification = (payload) => api.post('/admin/notifications', payload);
+export const getAdminAlerts = () => api.get('/admin/alerts');
+export const markAdminAlertRead = (id) => api.patch(`/admin/alerts/${id}/read`);
+export const markAllAdminAlertsRead = () => api.post('/admin/alerts/read-all');
+export const getAdminBadges = () => api.get('/admin/badges');
 export const getAdminCities = () => api.get('/admin/cities');
 export const createAdminCity = (payload) => api.post('/admin/cities', payload);
 export const patchAdminCity = (id, payload) => api.patch(`/admin/cities/${id}`, payload);
@@ -268,6 +285,10 @@ export const saveAdminDeliveryCharges = (payload) =>
   api.put('/admin/delivery-charges', payload);
 export const getAdminTax = () => api.get('/admin/tax');
 export const patchAdminTax = (payload) => api.patch('/admin/tax', payload);
+export const getAdminEmailSettings = () => api.get('/admin/email-settings');
+export const patchAdminEmailSettings = (payload) => api.patch('/admin/email-settings', payload);
+export const getAdminEmailQueue = () => api.get('/admin/email-queue');
+export const processAdminEmailQueue = () => api.post('/admin/email-queue/process');
 
 // --- Delivery Boy panel ---
 export const sendRiderOtp = (payload) => api.post('/delivery-boy/auth/send-otp', payload);
@@ -291,8 +312,35 @@ export const getRiderStats = () => api.get('/delivery-boy/stats');
 export const getRiderNotifications = () => api.get('/delivery-boy/notifications');
 export const markRiderNotificationRead = (id) =>
   api.patch(`/delivery-boy/notifications/${id}/read`);
+export const markAllRiderNotificationsRead = () =>
+  api.patch('/delivery-boy/notifications/read-all');
 export const getRiderRequests = () => api.get('/delivery-boy/requests');
 export const createRiderRequest = (payload) => api.post('/delivery-boy/requests', payload);
+
+// --- Franchise panel ---
+export const getFranchisePublicInfo = () => api.get('/franchise/public-info');
+export const submitFranchiseApplication = (payload) => api.post('/franchise/apply', payload);
+export const sendFranchiseOtp = (payload) => api.post('/franchise/auth/send-otp', payload);
+export const loginFranchiseApi = (payload) => api.post('/franchise/auth/login', payload);
+export const changeFranchisePassword = (payload) =>
+  api.post('/franchise/auth/change-password', payload);
+export const getFranchiseDashboard = () => api.get('/franchise/dashboard');
+export const getFranchiseMe = () => api.get('/franchise/me');
+export const patchFranchiseMe = (payload) => api.patch('/franchise/me', payload);
+export const getFranchisePartners = () => api.get('/franchise/partners');
+export const addFranchisePartner = (payload) => api.post('/franchise/partners', payload);
+export const getFranchisePins = () => api.get('/franchise/pins');
+export const requestFranchisePin = (payload) => api.post('/franchise/pins/request', payload);
+export const getFranchiseCommission = () => api.get('/franchise/commission');
+export const getFranchisePayments = () => api.get('/franchise/payments');
+export const getFranchiseBank = () => api.get('/franchise/bank');
+export const requestFranchiseBankChange = (payload) =>
+  api.post('/franchise/bank/change-request', payload);
+export const getFranchiseNotices = () => api.get('/franchise/notices');
+export const markFranchiseNoticeRead = (id) => api.patch(`/franchise/notices/${id}/read`);
+export const markAllFranchiseNoticesRead = () => api.patch('/franchise/notices/read-all');
+export const contactFranchiseHeadOffice = (payload) =>
+  api.post('/franchise/contact-head-office', payload);
 
 export const isApiOnline = () => lastOnline;
 export { API_BASE, TOKEN_KEY };

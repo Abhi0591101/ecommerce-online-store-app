@@ -20,7 +20,7 @@ const SLOT_OPTIONS = [
 function BookingModal({ service, location, onClose, onConfirmed }) {
   const [slot, setSlot] = useState('express');
   const [address, setAddress] = useState(
-    `Flat 402, Tower B, ${location?.area || 'Sector 62, Noida'}`
+    `Flat 402, Tower B, ${location?.area || location?.city || 'your area'}`
   );
   const [phone, setPhone] = useState('9876543210');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePlatform } from '../context/PlatformContext';
+import SearchableSelect from '../components/SearchableSelect';
+import UnitPackFields from '../components/UnitPackFields';
 import {
   createProduct as createProductApi,
   getPendingProducts,
@@ -76,6 +78,7 @@ export default function StoreAdmin({
   const [savingProduct, setSavingProduct] = useState(false);
   const [productMainCat, setProductMainCat] = useState('');
   const [productSubCat, setProductSubCat] = useState('');
+  const [serviceCategory, setServiceCategory] = useState('plumbing');
   const [catFormMode, setCatFormMode] = useState('main'); // main | sub
   const [catParentId, setCatParentId] = useState('');
   const [savingCategory, setSavingCategory] = useState(false);
@@ -375,10 +378,18 @@ export default function StoreAdmin({
     const name = fd.get('name');
     const mrp = Number(fd.get('mrp'));
     const sellingPrice = Number(fd.get('sellingPrice')) || mrp;
-    const unit = fd.get('unit');
+    const unit = String(fd.get('unit') || '').trim();
+    if (!unit) {
+      notify('Enter quantity and select unit type');
+      return;
+    }
     const brand = fd.get('brand') || 'Local Brand';
     const categorySlug = productMainCat || fd.get('category');
     const subcategorySlug = productSubCat || fd.get('subcategory');
+    if (!categorySlug || !subcategorySlug) {
+      notify('Select category and subcategory');
+      return;
+    }
     const sku = fd.get('sku') || '';
     const stockQty = Number(fd.get('stockQty')) || 50;
     const photoUrl =
@@ -772,46 +783,43 @@ export default function StoreAdmin({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Main Category *</label>
-                      <select
+                      <SearchableSelect
                         name="category"
+                        options={mainCategories
+                          .filter((c) => c.isActive !== false)
+                          .map((c) => ({ value: c.slug, label: c.name }))}
                         value={productMainCat}
-                        onChange={(e) => setProductMainCat(e.target.value)}
-                        className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
-                      >
-                        {mainCategories.filter((c) => c.isActive !== false).map((c) => (
-                          <option key={c.slug || c._id} value={c.slug}>{c.name}</option>
-                        ))}
-                      </select>
+                        onChange={setProductMainCat}
+                        placeholder="Search category…"
+                        required
+                      />
                     </div>
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Subcategory *</label>
-                      <select
+                      <SearchableSelect
                         name="subcategory"
+                        options={productSubOptions.map((c) => ({
+                          value: c.slug,
+                          label: c.name
+                        }))}
                         value={productSubCat}
-                        onChange={(e) => setProductSubCat(e.target.value)}
+                        onChange={setProductSubCat}
+                        placeholder={
+                          productSubOptions.length ? 'Search subcategory…' : 'No active subcategories'
+                        }
                         required
-                        className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
-                      >
-                        {productSubOptions.length === 0 && (
-                          <option value="">No active subcategories</option>
-                        )}
-                        {productSubOptions.map((c) => (
-                          <option key={c.slug || c._id} value={c.slug}>{c.name}</option>
-                        ))}
-                      </select>
+                      />
                       <p className="text-[10px] text-slate-400 mt-1">Categories are managed by Admin only.</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Brand (optional)</label>
-                      <input name="brand" placeholder="Nestle / Amul / Local" className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none" />
-                    </div>
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Unit / Pack size *</label>
-                      <input name="unit" required placeholder="500g / 1L / Pack of 4" className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none" />
-                    </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Brand (optional)</label>
+                    <input
+                      name="brand"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    />
                   </div>
+                  <UnitPackFields required />
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Selling Price (₹) *</label>
@@ -1331,17 +1339,13 @@ export default function StoreAdmin({
                 {catFormMode === 'sub' && (
                   <div>
                     <label className="font-bold text-slate-700 block mb-1">Parent Main Category *</label>
-                    <select
+                    <SearchableSelect
+                      options={mainCategories.map((c) => ({ value: c._id, label: c.name }))}
                       value={catParentId}
-                      onChange={(e) => setCatParentId(e.target.value)}
+                      onChange={setCatParentId}
+                      placeholder="Search main category…"
                       required
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
-                    >
-                      <option value="">Select main category</option>
-                      {mainCategories.map((c) => (
-                        <option key={c._id} value={c._id}>{c.name}</option>
-                      ))}
-                    </select>
+                    />
                   </div>
                 )}
                 <div>
@@ -1663,9 +1667,18 @@ export default function StoreAdmin({
                         {p.categoryId?.name || '—'} / {p.subcategoryId?.name || '—'} · {p.brand || 'No brand'} · MRP ₹
                         {p.mrp} · {p.unit}
                       </p>
-                      <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                        Submitted by {p.submittedBy?.name || p.submittedBy?.phone || 'seller'}
-                      </p>
+                      <div className="mt-1 rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-1.5 text-[10px] font-bold text-indigo-900 space-y-0.5">
+                        <p>
+                          Seller: {p.sellerName || p.submittedBy?.name || 'Unknown'} ·{' '}
+                          {p.sellerPhone || p.submittedBy?.phone || '—'}
+                        </p>
+                        <p>
+                          Store: {p.storeName || p.sellerStore?.name || '—'}
+                          {p.storeCity || p.sellerStore?.city
+                            ? ` · ${p.storeCity || p.sellerStore?.city}`
+                            : ''}
+                        </p>
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -1788,8 +1801,7 @@ export default function StoreAdmin({
                       plateNumber: f.plateNumber.value,
                       licenseNo: f.licenseNo.value,
                       city: f.city.value,
-                      status: 'approved',
-                      password: 'password123'
+                      status: 'approved'
                     });
                     notify(`Rider ${f.name.value} saved to MongoDB`);
                     f.reset();
@@ -1859,7 +1871,7 @@ export default function StoreAdmin({
                   try {
                     await addService({
                       name: f.name.value,
-                      category: f.category.value,
+                      category: serviceCategory || f.category?.value || 'other',
                       visitCharge: Number(f.visitCharge.value),
                       photoUrl: f.photoUrl.value || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=500&auto=format&fit=crop&q=80',
                       description: f.description.value,
@@ -1881,16 +1893,23 @@ export default function StoreAdmin({
               >
                 <h4 className="font-black text-sm text-slate-800">+ Add Service (live)</h4>
                 <input name="name" required placeholder="Service name" className="w-full border rounded-xl px-3 py-2 text-xs" />
-                <select name="category" className="w-full border rounded-xl px-3 py-2 text-xs">
-                  <option value="plumbing">plumbing</option>
-                  <option value="electrical">electrical</option>
-                  <option value="ac">ac</option>
-                  <option value="cleaning">cleaning</option>
-                  <option value="appliance">appliance</option>
-                  <option value="carpentry">carpentry</option>
-                  <option value="beauty">beauty</option>
-                  <option value="other">other</option>
-                </select>
+                <SearchableSelect
+                  name="category"
+                  options={[
+                    { value: 'plumbing', label: 'Plumbing' },
+                    { value: 'electrical', label: 'Electrical' },
+                    { value: 'ac', label: 'AC' },
+                    { value: 'cleaning', label: 'Cleaning' },
+                    { value: 'appliance', label: 'Appliance' },
+                    { value: 'carpentry', label: 'Carpentry' },
+                    { value: 'beauty', label: 'Beauty' },
+                    { value: 'other', label: 'Other' }
+                  ]}
+                  value={serviceCategory}
+                  onChange={setServiceCategory}
+                  placeholder="Search service category…"
+                  required
+                />
                 <input name="visitCharge" required type="number" defaultValue="149" className="w-full border rounded-xl px-3 py-2 text-xs" />
                 <input name="providerName" required placeholder="Provider name" className="w-full border rounded-xl px-3 py-2 text-xs" />
                 <input name="providerPhone" required placeholder="Provider phone" className="w-full border rounded-xl px-3 py-2 text-xs" />

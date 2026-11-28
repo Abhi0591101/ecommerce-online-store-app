@@ -1,4 +1,4 @@
-import { FALLBACK_LOCATION } from '../data/defaults';
+import { EMPTY_LOCATION } from '../data/defaults';
 
 const KEYS = {
   cart: 'hyperlocal_cart_v1',
@@ -61,7 +61,15 @@ export function loadPersistedLocation() {
 }
 
 export function persistLocation(location) {
-  saveJSON(KEYS.location, location || FALLBACK_LOCATION);
+  if (!location || !location.pincode) {
+    try {
+      window.localStorage.removeItem(KEYS.location);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  saveJSON(KEYS.location, location);
 }
 
-export { KEYS, FALLBACK_LOCATION };
+export { KEYS, EMPTY_LOCATION, EMPTY_LOCATION as FALLBACK_LOCATION };

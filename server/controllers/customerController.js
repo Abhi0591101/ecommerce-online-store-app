@@ -12,6 +12,7 @@ const ProductReview = require('../models/ProductReview');
 const PlatformConfig = require('../models/PlatformConfig');
 const ServiceArea = require('../models/ServiceArea');
 const { publicCustomer, makeReferralCode } = require('./customerAuthController');
+const { verifyOtp } = require('../utils/otpStore');
 
 const ensureReferralCode = async (user) => {
   if (user.referralCode) return user;
@@ -41,9 +42,38 @@ const getProfile = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
-    const { name, email, avatarUrl, preferredLanguage, city } = req.body;
+    const { name, email, avatarUrl, preferredLanguage, city, otp } = req.body;
     if (name) user.name = String(name).trim();
-    if (email) user.email = String(email).trim().toLowerCase();
+
+    if (email !== undefined) {
+      const nextEmail = String(email || '').trim().toLowerCase();
+      const currentEmail = String(user.email || '').trim().toLowerCase();
+      if (nextEmail && nextEmail !== currentEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+          return res.status(400).json({ success: false, message: 'Enter a valid email address' });
+        }
+        if (!otp || !verifyOtp(user.phone, otp)) {
+          return res.status(400).json({
+            success: false,
+            message: 'OTP verification required to update email'
+          });
+        }
+        const emailTaken = await User.findOne({
+          email: nextEmail,
+          role: user.role || 'customer',
+          _id: { $ne: user._id }
+        });
+        if (emailTaken) {
+          return res.status(409).json({
+            success: false,
+            message: `This email is already registered as ${user.role || 'customer'}`
+          });
+        }
+        user.email = nextEmail;
+        user.emailVerified = true;
+      }
+    }
+
     if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
     if (preferredLanguage === 'en' || preferredLanguage === 'hi') {
       user.preferredLanguage = preferredLanguage;
@@ -58,13 +88,23 @@ const updateProfile = async (req, res, next) => {
 
 const changePassword = async (req, res, next) => {
   try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ success: false, message: 'currentPassword and newPassword required' });
+    const { currentPassword, newPassword, otp } = req.body;
+    if (!currentPassword || !newPassword || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'currentPassword, newPassword and OTP are required'
+      });
     }
     const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!verifyOtp(user.phone, otp)) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP — password not changed' });
+    }
     const ok = await bcrypt.compare(currentPassword, user.password || '');
     if (!ok) return res.status(400).json({ success: false, message: 'Current password incorrect' });
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
     res.json({ success: true, message: 'Password changed' });
@@ -75,12 +115,23 @@ const changePassword = async (req, res, next) => {
 
 const requestDeletion = async (req, res, next) => {
   try {
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { deletionRequested: true, deletionRequestedAt: new Date() },
-      { new: true }
-    );
-    res.json({ success: true, message: 'Deletion request submitted for Admin review', data: publicCustomer(user) });
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (user.deletionRequested) {
+      return res.json({
+        success: true,
+        message: 'Deletion request already pending Admin review',
+        data: publicCustomer(user)
+      });
+    }
+    user.deletionRequested = true;
+    user.deletionRequestedAt = new Date();
+    await user.save();
+    res.json({
+      success: true,
+      message: 'Deletion request submitted for Admin review',
+      data: publicCustomer(user)
+    });
   } catch (error) {
     next(error);
   }
@@ -96,19 +147,75 @@ const listAddresses = async (req, res, next) => {
   }
 };
 
+const ADDR_TYPES = ['House', 'Apartment', 'Business', 'Other'];
+const tagFromType = (addressType) => {
+  if (addressType === 'Business') return 'Office';
+  if (addressType === 'Other') return 'Other';
+  return 'Home';
+};
+
+const normalizeAddressBody = (body = {}) => {
+  const fullName = String(body.fullName || '').trim();
+  const mobile = String(body.mobile || '').trim().replace(/\s+/g, '');
+  const flatBuilding = String(body.flatBuilding || '').trim();
+  const streetArea = String(body.streetArea || '').trim();
+  const landmark = String(body.landmark || '').trim();
+  const pincode = String(body.pincode || '').trim();
+  const city = String(body.city || '').trim();
+  const state = String(body.state || '').trim();
+  const addressType = ADDR_TYPES.includes(body.addressType) ? body.addressType : 'House';
+  const weekendDelivery = ['yes', 'no'].includes(body.weekendDelivery) ? body.weekendDelivery : '';
+  const deliveryInstructions = String(body.deliveryInstructions || '').trim();
+  const tag = String(body.tag || tagFromType(addressType)).trim() || tagFromType(addressType);
+  return {
+    fullName,
+    mobile,
+    flatBuilding,
+    streetArea,
+    landmark,
+    pincode,
+    city,
+    state,
+    addressType,
+    weekendDelivery,
+    deliveryInstructions,
+    tag,
+    lat: body.lat,
+    lng: body.lng,
+    isDefault: !!body.isDefault
+  };
+};
+
+const validateAddressFields = (addr) => {
+  if (
+    !addr.fullName ||
+    !addr.mobile ||
+    !addr.flatBuilding ||
+    !addr.streetArea ||
+    !addr.landmark ||
+    !addr.pincode ||
+    !addr.city ||
+    !addr.state
+  ) {
+    return 'Full name, mobile, flat/building, street/area, landmark, pincode, city and state are all required';
+  }
+  if (!/^[6-9]\d{9}$/.test(addr.mobile) && !/^\+91[6-9]\d{9}$/.test(addr.mobile)) {
+    return 'Enter a valid 10-digit mobile number';
+  }
+  if (!/^\d{6}$/.test(addr.pincode)) {
+    return 'pincode must be 6 digits';
+  }
+  return null;
+};
+
 const addAddress = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
-    const addr = {
-      tag: req.body.tag || 'Home',
-      flatBuilding: req.body.flatBuilding || '',
-      streetArea: req.body.streetArea || '',
-      pincode: req.body.pincode || '',
-      city: req.body.city || '',
-      lat: req.body.lat,
-      lng: req.body.lng,
-      isDefault: !!req.body.isDefault
-    };
+    const addr = normalizeAddressBody(req.body);
+    const errMsg = validateAddressFields(addr);
+    if (errMsg) {
+      return res.status(400).json({ success: false, message: errMsg });
+    }
     if (addr.isDefault) user.addresses.forEach((a) => { a.isDefault = false; });
     if (!user.addresses.length) addr.isDefault = true;
     user.addresses.push(addr);
@@ -124,9 +231,36 @@ const updateAddress = async (req, res, next) => {
     const user = await User.findById(req.user._id);
     const addr = user.addresses.id(req.params.addrId);
     if (!addr) return res.status(404).json({ success: false, message: 'Address not found' });
-    ['tag', 'flatBuilding', 'streetArea', 'pincode', 'city', 'lat', 'lng'].forEach((k) => {
-      if (req.body[k] !== undefined) addr[k] = req.body[k];
-    });
+
+    const onlyDefault =
+      Object.keys(req.body || {}).length === 1 && req.body.isDefault !== undefined;
+
+    if (!onlyDefault) {
+      const nextAddr = normalizeAddressBody({ ...addr.toObject(), ...req.body });
+      const errMsg = validateAddressFields(nextAddr);
+      if (errMsg) {
+        return res.status(400).json({ success: false, message: errMsg });
+      }
+      [
+        'tag',
+        'fullName',
+        'mobile',
+        'flatBuilding',
+        'streetArea',
+        'landmark',
+        'pincode',
+        'city',
+        'state',
+        'addressType',
+        'weekendDelivery',
+        'deliveryInstructions',
+        'lat',
+        'lng'
+      ].forEach((k) => {
+        if (nextAddr[k] !== undefined) addr[k] = nextAddr[k];
+      });
+    }
+
     if (req.body.isDefault) {
       user.addresses.forEach((a) => { a.isDefault = false; });
       addr.isDefault = true;
@@ -278,6 +412,20 @@ const requestCancel = async (req, res, next) => {
       body: `Order ${order.orderNumber} cancellation is pending Admin approval.`,
       meta: { orderId: order._id }
     });
+    try {
+      const { pushAdminAlert } = require('../utils/adminAlerts');
+      await pushAdminAlert({
+        type: 'order_cancel',
+        title: 'Order cancellation request',
+        body: `Order ${order.orderNumber}: ${reason}`,
+        entityType: 'order',
+        entityId: order._id,
+        linkTab: 'orders',
+        dedupeKey: `order_cancel:${order._id}`
+      });
+    } catch {
+      /* non-blocking */
+    }
     res.json({ success: true, data: order, message: 'Cancellation request sent to Admin' });
   } catch (error) {
     next(error);

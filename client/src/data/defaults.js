@@ -1,9 +1,16 @@
-/** Bootstrap only — replaced by GET /api/locations once API is online */
-export const FALLBACK_LOCATION = {
-  pincode: '201301',
-  area: 'Sector 62, Noida',
-  city: 'Noida',
-  lat: 28.628,
-  lng: 77.3649,
+/**
+ * Empty delivery location — never a hardcoded city/PIN.
+ * Catalog loads only after GPS (or user-confirmed PIN) sets a real location.
+ */
+export const EMPTY_LOCATION = {
+  pincode: '',
+  area: '',
+  city: '',
+  state: '',
+  lat: null,
+  lng: null,
   radiusKm: 5
 };
+
+/** @deprecated use EMPTY_LOCATION — kept so older imports don't break */
+export const FALLBACK_LOCATION = EMPTY_LOCATION;

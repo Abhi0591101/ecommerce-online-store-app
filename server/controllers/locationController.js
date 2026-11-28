@@ -1,25 +1,32 @@
 const ServiceArea = require('../models/ServiceArea');
-const pinGeo = require('@devzoy/indian-pincode-geo');
+const {
+  isValidIndianPin,
+  normalizePin,
+  resolvePinFromGps
+} = require('../utils/pinFromGps');
 
-const isValidIndianPin = (pin) => /^[1-9]\d{5}$/.test(String(pin || ''));
-
-const normalizePin = (raw) => {
-  if (!raw) return '';
-  const matches = String(raw).match(/\d{6}/g) || [];
-  return matches.find(isValidIndianPin) || '';
-};
-
-async function fetchJson(url, headers = {}) {
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'HyperLocalGroceryApp/1.0 (local-dev; reverse-geocode)',
-      ...headers
-    }
-  });
-  if (!res.ok) throw new Error(`Upstream ${res.status}`);
-  return res.json();
+async function fetchJson(url, headers = {}, timeoutMs = 2500) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'HyperLocalGroceryApp/1.0 (local-dev; reverse-geocode)',
+        ...headers
+      }
+    });
+    if (!res.ok) throw new Error(`Upstream ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
+
+/** Resolve settled promise value or null */
+const settledValue = (result) =>
+  result?.status === 'fulfilled' ? result.value : null;
 
 /** Google Geocoding — same quality as Google Maps when API key is set */
 async function googleReverse(lat, lng, apiKey) {
@@ -59,40 +66,7 @@ async function googleReverse(lat, lng, apiKey) {
   };
 }
 
-/** India Post official geo dataset — nearest pincode to GPS (offline) */
-function indiaPostReverse(lat, lng) {
-  const nearest = pinGeo.reverseLookup(lat, lng);
-  if (!nearest?.pincode || !isValidIndianPin(nearest.pincode)) {
-    return null;
-  }
-
-  // Reject if nearest pin centroid is unreasonably far (bad GPS / outside coverage)
-  if (typeof nearest.distanceKm === 'number' && nearest.distanceKm > 12) {
-    return null;
-  }
-
-  const nearby = pinGeo.findNearby(lat, lng, { radiusKm: 3, limit: 5 }) || [];
-  const closestOffice = nearby[0];
-  const offices = pinGeo.lookup(nearest.pincode) || [];
-  const office = closestOffice || offices[0];
-
-  return {
-    provider: 'india-post-geo',
-    displayName: office
-      ? `${office.officeName || ''}, ${office.district || ''}, ${office.state || ''} ${nearest.pincode}`
-          .replace(/\s+/g, ' ')
-          .trim()
-      : `PIN ${nearest.pincode}`,
-    area: office?.officeName || `PIN ${nearest.pincode}`,
-    city: office?.district || '',
-    state: office?.state || '',
-    pincode: String(nearest.pincode),
-    pinConfidence: nearest.distanceKm != null && nearest.distanceKm <= 2 ? 'high' : 'medium',
-    distanceKm: nearest.distanceKm
-  };
-}
-
-/** Street/locality label from OSM (pincode often wrong — used only for area name) */
+/** Street/locality label from OSM (postcode is only a soft candidate) */
 async function nominatimLabel(lat, lng) {
   try {
     const url =
@@ -113,7 +87,28 @@ async function nominatimLabel(lat, lng) {
       city: a.city || a.town || a.village || a.municipality || a.state_district || '',
       state: a.state || '',
       displayName: data.display_name || '',
-      osmPin: normalizePin(a.postcode)
+      postcode: normalizePin(a.postcode)
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Free browser-friendly reverse geocode (postcode as soft candidate only) */
+async function bigDataCloudLabel(lat, lng) {
+  try {
+    const url =
+      `https://api.bigdatacloud.net/data/reverse-geocode-client` +
+      `?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
+    const data = await fetchJson(url);
+    return {
+      area: data.locality || data.city || data.principalSubdivision || '',
+      city: data.city || data.locality || '',
+      state: data.principalSubdivision || '',
+      displayName: [data.locality, data.city, data.principalSubdivision, data.countryName]
+        .filter(Boolean)
+        .join(', '),
+      postcode: normalizePin(data.postcode)
     };
   } catch {
     return null;
@@ -175,9 +170,8 @@ const getLocations = async (req, res, next) => {
 
 /**
  * GET /api/locations/reverse?lat=&lng=
- * 1) Google Geocoding (if GOOGLE_MAPS_API_KEY set) — same as Google Maps
- * 2) Else India Post official geo reverseLookup for correct Indian PIN
- * 3) OSM for street/locality label only
+ * Fast path: offline India Post PIN (instant). Labels from OSM/BDC are best-effort
+ * with a short timeout so the client never hits axios 12s timeout.
  */
 const reverseGeocode = async (req, res, next) => {
   try {
@@ -193,71 +187,95 @@ const reverseGeocode = async (req, res, next) => {
       });
     }
 
+    // 1) Instant PIN from nearest India Post office (local dataset)
+    let pinHit = resolvePinFromGps(lat, lng, []);
+
+    // 2) Soft labels / optional pin hints — never block more than ~2.2s total
     const googleKey = process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_GEOCODING_API_KEY;
-    let resolved = null;
-
+    const labelJobs = [
+      nominatimLabel(lat, lng),
+      bigDataCloudLabel(lat, lng)
+    ];
     if (googleKey) {
-      try {
-        resolved = await googleReverse(lat, lng, googleKey);
-      } catch (err) {
-        console.warn('[reverse] Google geocode failed:', err.message);
-      }
+      labelJobs.push(
+        googleReverse(lat, lng, googleKey).catch((err) => {
+          console.warn('[reverse] Google geocode failed:', err.message);
+          return null;
+        })
+      );
     }
 
-    // Authoritative Indian PIN from official postal geo dataset
-    const indiaPin = indiaPostReverse(lat, lng);
-    const osm = await nominatimLabel(lat, lng);
+    const settled = await Promise.allSettled(labelJobs);
+    const osm = settledValue(settled[0]);
+    const bdc = settledValue(settled[1]);
+    const google = settledValue(settled[2]) || null;
 
-    if (!resolved) {
-      resolved = {
-        provider: indiaPin?.provider || 'fallback',
-        displayName: osm?.displayName || indiaPin?.displayName || '',
-        area: osm?.area || indiaPin?.area || 'Current GPS location',
-        city: osm?.city || indiaPin?.city || '',
-        state: osm?.state || indiaPin?.state || '',
-        pincode: indiaPin?.pincode || '',
-        pinConfidence: indiaPin?.pinConfidence || 'none'
-      };
-    } else {
-      // If Google missed PIN (rare), fill from India Post geo
-      if (!isValidIndianPin(resolved.pincode) && indiaPin?.pincode) {
-        resolved.pincode = indiaPin.pincode;
-        resolved.pinConfidence = indiaPin.pinConfidence;
-        resolved.provider = `${resolved.provider}+india-post-geo`;
-      }
-      // Prefer local street label from OSM/Google area; enrich city/state from India Post if empty
-      if (!resolved.city && indiaPin?.city) resolved.city = indiaPin.city;
-      if (!resolved.state && indiaPin?.state) resolved.state = indiaPin.state;
+    const providerPins = [
+      google?.pincode,
+      osm?.postcode,
+      bdc?.postcode
+    ].filter(Boolean);
+
+    // Re-score with soft provider hints (still offline / fast)
+    if (providerPins.length) {
+      pinHit = resolvePinFromGps(lat, lng, providerPins) || pinHit;
     }
 
-    // Enrich names from live India Post API when we have a PIN
-    if (isValidIndianPin(resolved.pincode)) {
-      const office = await indiaPostOfficeNames(resolved.pincode);
+    // Prefer nearest India Post office label for area (matches PIN selection)
+    let area =
+      pinHit?.officeName ||
+      google?.area ||
+      osm?.area ||
+      bdc?.area ||
+      'Current GPS location';
+    let city =
+      pinHit?.district ||
+      google?.city ||
+      osm?.city ||
+      bdc?.city ||
+      '';
+    let state =
+      pinHit?.state ||
+      google?.state ||
+      osm?.state ||
+      bdc?.state ||
+      '';
+    let displayName = pinHit
+      ? `${pinHit.officeName || area}, ${pinHit.district || city}, ${pinHit.state || state} ${pinHit.pincode}`
+          .replace(/\s+/g, ' ')
+          .trim()
+      : google?.displayName || osm?.displayName || bdc?.displayName || '';
+
+    const pincode = pinHit?.pincode || '';
+
+    // Optional live office name — short timeout, ignore failures
+    if (isValidIndianPin(pincode) && (!city || !state || area === pinHit?.officeName)) {
+      const office = await indiaPostOfficeNames(pincode).catch(() => null);
       if (office) {
-        if (!resolved.city) resolved.city = office.city;
-        if (!resolved.state) resolved.state = office.state;
-        // Keep more specific locality/street as area when we have it
-        if (!resolved.area || resolved.area === 'Current GPS location') {
-          resolved.area = office.area;
-        }
+        if (!city) city = office.city;
+        if (!state) state = office.state;
+        if (!area || area === 'Current GPS location') area = office.area;
       }
     }
 
     res.json({
       success: true,
       data: {
-        area: resolved.area || 'Current GPS location',
-        city: resolved.city || '',
-        state: resolved.state || '',
-        pincode: isValidIndianPin(resolved.pincode) ? resolved.pincode : '',
-        displayName: resolved.displayName || '',
+        area: area || 'Current GPS location',
+        city: city || '',
+        state: state || '',
+        pincode: isValidIndianPin(pincode) ? pincode : '',
+        displayName: displayName || '',
         lat,
         lng,
-        pinConfidence: isValidIndianPin(resolved.pincode)
-          ? resolved.pinConfidence || 'medium'
+        pinConfidence: isValidIndianPin(pincode) ? pinHit?.pinConfidence || 'medium' : 'none',
+        distanceKm: pinHit?.distanceKm,
+        alternates: pinHit?.alternates || [],
+        provider: pinHit
+          ? pinHit.sources?.[0] || 'india-post-nearest-office'
           : 'none',
-        provider: resolved.provider,
-        usedGoogle: Boolean(googleKey && String(resolved.provider).includes('google'))
+        usedGoogle: Boolean(google),
+        sources: pinHit?.sources || []
       }
     });
   } catch (error) {

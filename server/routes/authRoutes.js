@@ -1,5 +1,12 @@
 const express = require('express');
-const { login, register, me } = require('../controllers/authController');
+const {
+  login,
+  loginWithOtp,
+  sendPortalOtp,
+  register,
+  logout,
+  me
+} = require('../controllers/authController');
 const { sendSellerOtp, registerSeller } = require('../controllers/sellerAuthController');
 const {
   sendCustomerOtp,
@@ -12,6 +19,9 @@ const { protect } = require('../middleware/auth');
 const router = express.Router();
 
 router.post('/login', login);
+router.post('/send-otp', sendPortalOtp);
+router.post('/login-otp', loginWithOtp);
+router.post('/logout', protect, logout);
 router.post('/register', register);
 router.post('/seller/send-otp', sendSellerOtp);
 router.post('/seller/register', registerSeller);

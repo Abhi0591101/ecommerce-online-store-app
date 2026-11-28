@@ -5,7 +5,7 @@ const Delivery = require('../models/Delivery');
 const Store = require('../models/Store');
 const RiderRequest = require('../models/RiderRequest');
 const RiderNotification = require('../models/RiderNotification');
-const { issueOtp, verifyOtp, DEMO_OTP, normalizePhone } = require('../utils/otpStore');
+const { issueOtp, verifyOtp, normalizePhone } = require('../utils/otpStore');
 const { signToken } = require('../middleware/auth');
 const { publicUser } = require('./authController');
 
@@ -95,8 +95,8 @@ const sendRiderOtp = async (req, res, next) => {
     res.json({
       success: true,
       mode: result.mode,
-      ...(result.otp ? { demoOtp: result.otp, otp: result.otp } : {}),
-      message: result.message || `OTP: ${DEMO_OTP}`
+      ...(result.otp ? { otp: result.otp, demoOtp: result.demoOtp || result.otp } : {}),
+      message: result.message || 'OTP sent to your mobile number'
     });
   } catch (error) {
     next(error);
@@ -113,15 +113,31 @@ const registerRider = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
     const phone = normalizePhone(b.phone);
-    if (await User.findOne({ phone })) {
-      return res.status(409).json({ success: false, message: 'Phone already registered' });
+    if (await User.findOne({ phone, role: 'driver' })) {
+      return res.status(409).json({
+        success: false,
+        message: 'This mobile is already registered as a rider'
+      });
     }
-    const password = b.password || 'password123';
+    const emailNorm = b.email ? String(b.email).trim().toLowerCase() : '';
+    if (emailNorm && (await User.findOne({ email: emailNorm, role: 'driver' }))) {
+      return res.status(409).json({
+        success: false,
+        message: 'This email is already registered as a rider'
+      });
+    }
+    if (!b.password || String(b.password).length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required (min 6 characters)'
+      });
+    }
+    const password = b.password;
     const hash = await bcrypt.hash(password, 10);
     const rider = await User.create({
       name: b.name,
       phone,
-      email: b.email || undefined,
+      email: emailNorm || undefined,
       password: hash,
       role: 'driver',
       status: 'pending',
@@ -145,6 +161,20 @@ const registerRider = async (req, res, next) => {
       ifsc: b.ifsc || '',
       bankProofUrl: b.bankProofUrl || ''
     });
+    try {
+      const { pushAdminAlert } = require('../utils/adminAlerts');
+      await pushAdminAlert({
+        type: 'rider_application',
+        title: 'Delivery partner pending approval',
+        body: `${rider.name} (${rider.phone})`,
+        entityType: 'user',
+        entityId: rider._id,
+        linkTab: 'delivery',
+        dedupeKey: `rider_application:${rider._id}`
+      });
+    } catch {
+      /* non-blocking */
+    }
     res.status(201).json({
       success: true,
       message: 'Registration submitted — awaiting Admin approval',
@@ -176,25 +206,11 @@ const loginRiderOtp = async (req, res, next) => {
   }
 };
 
-const loginRiderEmail = async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'email and password required' });
-    }
-    const user = await User.findOne({ email: String(email).trim().toLowerCase(), role: 'driver' });
-    if (!user || !user.password) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    if (user.status === 'suspended') {
-      return res.status(403).json({ success: false, message: 'Account suspended' });
-    }
-    res.json({ success: true, data: { token: signToken(user), user: mapRiderProfile(user) } });
-  } catch (error) {
-    next(error);
-  }
+const loginRiderEmail = async (_req, res) => {
+  res.status(400).json({
+    success: false,
+    message: 'Password login disabled. Send OTP to your mobile and sign in with OTP.'
+  });
 };
 
 // ─── Profile ────────────────────────────────────────────────
@@ -464,6 +480,12 @@ const verifyOtpComplete = async (req, res, next) => {
     order.status = 'completed';
     if (order.paymentMode === 'COD') order.paymentStatus = 'paid';
     await order.save();
+    try {
+      const { postFranchiseCommissionOnComplete } = require('../utils/franchiseCommission');
+      await postFranchiseCommissionOnComplete(order);
+    } catch {
+      /* ignore */
+    }
 
     const rider = await User.findById(req.user._id);
     const earn = d.deliveryCharge || 30;
@@ -525,6 +547,15 @@ const listNotifications = async (req, res, next) => {
   try {
     const data = await RiderNotification.find({ riderId: req.user._id }).sort({ createdAt: -1 }).limit(100);
     res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const markAllNotificationsRead = async (req, res, next) => {
+  try {
+    await RiderNotification.updateMany({ riderId: req.user._id, read: false }, { read: true });
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }
@@ -634,6 +665,7 @@ module.exports = {
   verifyOtpComplete,
   getHistoryStats,
   listNotifications,
+  markAllNotificationsRead,
   markNotificationRead,
   listRequests,
   createRequest,

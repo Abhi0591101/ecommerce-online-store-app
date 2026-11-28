@@ -18,7 +18,13 @@ export default function CompareModal({ product, open, onClose, location, stores 
 
     const load = async () => {
       try {
-        const res = await getProductComparison(product._id);
+        const res = await getProductComparison(product._id, {
+          lat: location?.lat,
+          lng: location?.lng,
+          city: location?.city,
+          pincode: location?.pincode,
+          radiusKm: location?.radiusKm || 40
+        });
         if (!cancelled && res?.data) {
           setComparison(res.data);
           return;
@@ -230,7 +236,9 @@ export default function CompareModal({ product, open, onClose, location, stores 
                     <span className="text-base">📍</span>
                     <div>
                       <span className="font-bold text-slate-800 block">
-                        Delivery to {location?.area || 'Sector 62, Noida'} - {location?.pincode || '201301'}
+                        Delivery to{' '}
+                        {location?.area || location?.city || 'your location'}
+                        {location?.pincode ? ` - ${location.pincode}` : ''}
                       </span>
                       <span className="text-[11px] text-[#038d63] font-semibold">
                         ⚡ Express Delivery in 15-25 mins available!

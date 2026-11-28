@@ -3,6 +3,7 @@ import {
   fetchMe,
   getStoredToken,
   login as loginApi,
+  logoutApi,
   setStoredToken
 } from '../services/api';
 
@@ -51,7 +52,12 @@ export function AuthProvider({ children }) {
     return applySession(res.data?.token, res.data?.user);
   }, [applySession]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      if (getStoredToken()) await logoutApi();
+    } catch {
+      /* still clear local session */
+    }
     setStoredToken('');
     setToken('');
     setUser(null);

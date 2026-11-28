@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { FALLBACK_LOCATION } from '../data/defaults';
+import { EMPTY_LOCATION } from '../data/defaults';
+import { useAuth } from './AuthContext';
 import {
   createCategory as createCategoryApi,
   createRider as createRiderApi,
@@ -40,6 +41,12 @@ import {
   persistLocation,
   persistOrders
 } from '../utils/offlineStore';
+import {
+  detectCurrentDeliveryLocation,
+  hasUsableDeliveryLocation,
+  isFallbackLocation,
+  isValidIndianPin
+} from '../utils/detectLocation';
 
 const PlatformContext = createContext(null);
 
@@ -47,24 +54,27 @@ const enrichProduct = (p) => ({
   ...p,
   categorySlug: p.categoryId?.slug || p.categorySlug,
   subcategorySlug: p.subcategoryId?.slug || p.subcategorySlug,
-  storeOffers: p.lowestStore
-    ? [
-        {
-          storeId: p.lowestStore.storeId,
-          price: p.lowestPrice,
-          stockQuantity: 50,
-          deliveryFee:
-            p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
-              ? 0
-              : p.lowestStore.baseDeliveryFee || 0,
-          totalCost:
-            p.lowestPrice +
-            (p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
-              ? 0
-              : p.lowestStore.baseDeliveryFee || 0)
-        }
-      ]
-    : p.storeOffers || []
+  storeOffers:
+    Array.isArray(p.storeOffers) && p.storeOffers.length
+      ? p.storeOffers
+      : p.lowestStore
+        ? [
+            {
+              storeId: p.lowestStore.storeId,
+              price: p.lowestPrice,
+              stockQuantity: 50,
+              deliveryFee:
+                p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
+                  ? 0
+                  : p.lowestStore.baseDeliveryFee || 0,
+              totalCost:
+                p.lowestPrice +
+                (p.lowestPrice >= (p.lowestStore.freeDeliveryAbove || 0)
+                  ? 0
+                  : p.lowestStore.baseDeliveryFee || 0)
+            }
+          ]
+        : []
 });
 
 const isMainCategory = (c) => !c.parentId || c.parentId === null || c.isMain === true;
@@ -93,7 +103,7 @@ const normalizeIncomingOrder = (order) => {
     customerName: order.customerName,
     customerPhone: order.customerPhone,
     deliveryAddress: order.deliveryAddress,
-    pincode: order.pincode || '201301',
+    pincode: order.pincode || '',
     items: (order.items || []).map((it) => ({
       ...it,
       name: it.productName || it.name,
@@ -124,10 +134,24 @@ const normalizeIncomingOrder = (order) => {
 };
 
 export function PlatformProvider({ children }) {
+  const { user, isAuthenticated } = useAuth();
+  const isSuperAdmin = isAuthenticated && user?.role === 'superadmin';
+
   const [view, setView] = useState('customer');
-  const [location, setLocationState] = useState(
-    () => loadPersistedLocation() || FALLBACK_LOCATION
-  );
+  const [location, setLocationState] = useState(() => {
+    const persisted = loadPersistedLocation();
+    if (persisted && isValidIndianPin(persisted.pincode) && !isFallbackLocation(persisted)) {
+      return { ...persisted, detecting: true };
+    }
+    // No hardcoded city/PIN — wait for live GPS (or user PIN picker)
+    return {
+      ...EMPTY_LOCATION,
+      area: 'Detecting location…',
+      detecting: true
+    };
+  });
+  const [locationDetecting, setLocationDetecting] = useState(true);
+  const [needLocationPicker, setNeedLocationPicker] = useState(false);
   const [serviceAreas, setServiceAreas] = useState([]);
   const [categories, setCategories] = useState([]);
   const [categoryTree, setCategoryTree] = useState([]);
@@ -151,6 +175,72 @@ export function PlatformProvider({ children }) {
   }, []);
 
   useEffect(() => ensureAudioUnlockedOnGesture(), []);
+
+  // Every page load / new browser session: refresh PIN from live GPS (like pincode.app)
+  useEffect(() => {
+    let cancelled = false;
+    setLocationDetecting(true);
+    setNeedLocationPicker(false);
+
+    (async () => {
+      // Small delay so React StrictMode remount does not abort a useful GPS read
+      await new Promise((r) => setTimeout(r, 300));
+      if (cancelled) return;
+
+      let lastErr = null;
+      for (let attempt = 0; attempt < 2 && !cancelled; attempt += 1) {
+        try {
+          const next = await detectCurrentDeliveryLocation({
+            timeoutMs: 15000,
+            minSamples: 2,
+            targetAccuracyM: 80
+          });
+          if (cancelled || !isValidIndianPin(next.pincode)) continue;
+          setLocation({
+            pincode: next.pincode,
+            area: next.area,
+            city: next.city,
+            state: next.state || '',
+            lat: next.lat,
+            lng: next.lng,
+            radiusKm: 5,
+            accuracyM: next.accuracyM,
+            source: 'gps',
+            confirmedAt: Date.now(),
+            detecting: false
+          });
+          setLocationDetecting(false);
+          setNeedLocationPicker(false);
+          return;
+        } catch (err) {
+          lastErr = err;
+          console.warn('[location] detect attempt failed:', err?.message || err);
+          await new Promise((r) => setTimeout(r, 800));
+        }
+      }
+
+      if (cancelled) return;
+      setLocationDetecting(false);
+      // GPS is the source of truth — do not fall back to a hardcoded city PIN.
+      // Only reuse last confirmed user PIN if GPS failed this session.
+      const persisted = loadPersistedLocation();
+      if (persisted && isValidIndianPin(persisted.pincode) && !isFallbackLocation(persisted)) {
+        setLocation({ ...persisted, detecting: false });
+      } else {
+        setLocationState({
+          ...EMPTY_LOCATION,
+          area: 'Set delivery location',
+          detecting: false
+        });
+        setNeedLocationPicker(true);
+      }
+      if (lastErr) console.warn('[location] auto-detect gave up:', lastErr?.message || lastErr);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setLocation]);
 
   useEffect(() => {
     persistOrders(orders);
@@ -200,6 +290,12 @@ export function PlatformProvider({ children }) {
   }, []);
 
   const refreshAdminQueues = useCallback(async () => {
+    // Admin-only endpoints — skip when guest / customer / seller / etc. (avoids 401 console noise)
+    if (!isSuperAdmin) {
+      setPendingStoreApprovals([]);
+      setPendingDriverKYCs([]);
+      return;
+    }
     try {
       const [pendingStores, pendingRiders, riders] = await Promise.all([
         getPendingStores().catch(() => ({ data: [] })),
@@ -215,33 +311,39 @@ export function PlatformProvider({ children }) {
         return fleet[0]?.id || null;
       });
     } catch {
-      /* auth may not be ready yet */
+      /* ignore */
     }
-  }, []);
+  }, [isSuperAdmin]);
 
   const hydrate = useCallback(async () => {
     try {
+      const canFetchCatalog = hasUsableDeliveryLocation(location);
+      const locQuery = canFetchCatalog
+        ? {
+            lat: location.lat,
+            lng: location.lng,
+            city: location.city,
+            radiusKm: location.radiusKm || 40,
+            pincode: location.pincode
+          }
+        : null;
+
       const [catRes, treeRes, prodRes, storeRes, orderRes, serviceRes, locationRes, riderRes] =
         await Promise.all([
           getCategories({ includeInactive: 1 }).catch(() => getCategories()),
           getCategoryTree(true).catch(() => ({ data: [] })),
-          getProducts(),
-          getStores({
-            lat: location.lat,
-            lng: location.lng,
-            radiusKm: location.radiusKm || 40,
-            pincode: location.pincode
-          }),
+          locQuery ? getProducts(locQuery) : Promise.resolve({ data: [] }),
+          locQuery ? getStores(locQuery) : Promise.resolve({ data: [] }),
           getOrders(),
-          getServices({ city: location.city }),
+          location.city ? getServices({ city: location.city }) : Promise.resolve({ data: [] }),
           getLocations(),
           getRiders({ status: 'approved' })
         ]);
 
       setCategories(catRes.data || []);
       setCategoryTree(treeRes.data || []);
-      setProducts((prodRes.data || []).map(enrichProduct));
-      setStores(withStoreDistances(storeRes.data || [], location));
+      setProducts(canFetchCatalog ? (prodRes.data || []).map(enrichProduct) : []);
+      setStores(canFetchCatalog ? withStoreDistances(storeRes.data || [], location) : []);
       setServices(serviceRes.data || []);
       setServiceAreas(locationRes.data || []);
 
@@ -274,11 +376,25 @@ export function PlatformProvider({ children }) {
       setStores([]);
       setServices([]);
     }
-  }, [location.lat, location.lng, location.radiusKm, location.pincode, location.city, setLocation, refreshAdminQueues]);
+  }, [
+    location.lat,
+    location.lng,
+    location.radiusKm,
+    location.pincode,
+    location.city,
+    location.detecting,
+    setLocation,
+    refreshAdminQueues
+  ]);
 
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  // After admin session becomes available (token boot / login), load pending queues
+  useEffect(() => {
+    if (isSuperAdmin) refreshAdminQueues();
+  }, [isSuperAdmin, refreshAdminQueues]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -490,13 +606,23 @@ export function PlatformProvider({ children }) {
     await refreshCategories();
     // Refresh catalog so deactivated products drop out of storefront
     try {
-      const prodRes = await getProducts();
-      setProducts((prodRes.data || []).map(enrichProduct));
+      if (hasUsableDeliveryLocation(location)) {
+        const prodRes = await getProducts({
+          lat: location.lat,
+          lng: location.lng,
+          city: location.city,
+          radiusKm: location.radiusKm || 40,
+          pincode: location.pincode
+        });
+        setProducts((prodRes.data || []).map(enrichProduct));
+      } else {
+        setProducts([]);
+      }
     } catch {
       /* ignore */
     }
     return res.data;
-  }, [refreshCategories]);
+  }, [refreshCategories, location.lat, location.lng, location.city, location.radiusKm, location.pincode]);
 
   const editProduct = useCallback(async (id, payload) => {
     const res = await updateProductApi(id, payload);
@@ -613,10 +739,10 @@ export function PlatformProvider({ children }) {
         prev.map((d) =>
           String(d.id) === String(activeDriverId)
             ? {
-                ...d,
-                todayEarnings: (d.todayEarnings || 0) + payout,
-                completedDeliveries: (d.completedDeliveries || 0) + 1
-              }
+              ...d,
+              todayEarnings: (d.todayEarnings || 0) + payout,
+              completedDeliveries: (d.completedDeliveries || 0) + 1
+            }
             : d
         )
       );
@@ -678,6 +804,9 @@ export function PlatformProvider({ children }) {
     setView,
     location,
     setLocation,
+    locationDetecting,
+    needLocationPicker,
+    setNeedLocationPicker,
     serviceAreas,
     categories,
     categoryTree,

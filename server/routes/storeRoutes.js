@@ -14,7 +14,12 @@ const router = express.Router();
 router.get('/', optionalAuth, getStores);
 router.get('/pending', protect, requireRole('superadmin'), getPendingStores);
 router.post('/', optionalAuth, createStore);
-router.patch('/:id/toggle-status', toggleStoreStatus);
+router.patch(
+  '/:id/toggle-status',
+  protect,
+  requireRole('superadmin', 'store_owner'),
+  toggleStoreStatus
+);
 router.patch('/:id/status', protect, requireRole('superadmin'), updateStoreKycStatus);
 router.patch('/:id', protect, requireRole('superadmin', 'store_owner'), updateStore);
 

@@ -53,7 +53,7 @@ const createRider = async (req, res, next) => {
     const {
       name,
       phone,
-      password = 'password123',
+      password,
       email,
       vehicleType,
       plateNumber,
@@ -69,18 +69,33 @@ const createRider = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Name and phone required' });
     }
 
-    const exists = await User.findOne({ phone: String(phone).trim() });
+    const exists = await User.findOne({ phone: String(phone).trim(), role: 'driver' });
     if (exists) {
-      return res.status(409).json({ success: false, message: 'Phone already registered' });
+      return res.status(409).json({
+        success: false,
+        message: 'This mobile is already registered as a rider'
+      });
+    }
+    const emailNorm = email ? String(email).trim().toLowerCase() : '';
+    if (emailNorm && (await User.findOne({ email: emailNorm, role: 'driver' }))) {
+      return res.status(409).json({
+        success: false,
+        message: 'This email is already registered as a rider'
+      });
     }
 
     const isAdmin = req.user?.role === 'superadmin';
-    const hash = await bcrypt.hash(password, 10);
+    const crypto = require('crypto');
+    const rawPass =
+      password && String(password).length >= 6
+        ? String(password)
+        : crypto.randomBytes(24).toString('hex');
+    const hash = await bcrypt.hash(rawPass, 10);
 
     const rider = await User.create({
       name,
       phone: String(phone).trim(),
-      email: email || undefined,
+      email: emailNorm || undefined,
       password: hash,
       role: 'driver',
       status: isAdmin ? (status || 'approved') : 'pending',
